@@ -1,683 +1,477 @@
 // Content script for Major Predictor extension
-// Runs on majors.im to inject predictions
+// Runs on majors.im to inject predictions and control panel
 
 (function() {
   'use strict';
 
-  // State management
-  let predictions = new Map();
-  let isAnalyzing = false;
-  let settings = {};
-
-  // Initialize when DOM is ready
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initialize);
-  } else {
-    initialize();
-  }
-
-  async function initialize() {
-    console.log('[Major Predictor] Initializing...');
-    
-    // Load settings
-    try {
-      const response = await chrome.runtime.sendMessage({ action: 'getSettings' });
-      if (response.success) {
-        settings = response.settings;
-      }
-    } catch (error) {
-      console.error('[Major Predictor] Error loading settings:', error);
+  // --- Logger Class ---
+  class Logger {
+    constructor() {
+      this.logs = [];
+      this.listeners = [];
     }
 
-    // Add prediction badges container styles
-    addGlobalStyles();
-
-    // If auto-predict is enabled, start prediction
-    if (settings.autoPredict && settings.openRouterApiKey) {
-      setTimeout(() => startPrediction(), 2000);
+    log(message, type = 'info') {
+      const entry = {
+        timestamp: new Date(),
+        message,
+        type
+      };
+      this.logs.push(entry);
+      console.log(`[Major Predictor] [${type.toUpperCase()}] ${message}`);
+      this.notifyListeners(entry);
     }
 
-    // Listen for messages from popup
-    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-      if (request.action === 'startPrediction') {
-        startPrediction();
-        sendResponse({ success: true });
-      } else if (request.action === 'updateAutoPredict') {
-        settings.autoPredict = request.value;
-        sendResponse({ success: true });
-      }
-      return true;
-    });
+    info(message) { this.log(message, 'info'); }
+    success(message) { this.log(message, 'success'); }
+    warn(message) { this.log(message, 'warn'); }
+    error(message) { this.log(message, 'error'); }
 
-    // Watch for dynamic content changes
-    observeMatches();
+    addListener(callback) {
+      this.listeners.push(callback);
+    }
+
+    notifyListeners(entry) {
+      this.listeners.forEach(cb => cb(entry));
+    }
+
+    getLogs() {
+      return this.logs;
+    }
   }
 
-  // Add global styles for prediction badges
-  function addGlobalStyles() {
-    const styleId = 'major-predictor-styles';
-    if (document.getElementById(styleId)) return;
+  const logger = new Logger();
 
-    const style = document.createElement('style');
-    style.id = styleId;
-    style.textContent = `
-      .mp-prediction-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 4px 10px;
-        border-radius: 6px;
-        font-size: 12px;
-        font-weight: 600;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        margin-left: 8px;
-        cursor: pointer;
-        transition: all 0.2s ease;
-        position: relative;
-      }
+  // --- UI Manager Class ---
+  class UIManager {
+    constructor() {
+      this.panel = null;
+      this.logModal = null;
+      this.isMinimized = false;
+    }
 
-      .mp-prediction-badge:hover {
-        transform: scale(1.05);
-      }
+    init() {
+      this.createControlPanel();
+      this.createLogModal();
+      logger.addListener(this.appendLogEntry.bind(this));
+    }
 
-      .mp-prediction-badge.team1 {
-        background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
-        color: #052e16;
-      }
+    createControlPanel() {
+      const panel = document.createElement('div');
+      panel.className = 'mp-control-panel';
+      panel.innerHTML = `
+        <div class="mp-panel-header">
+          <span class="mp-panel-title">Major Predictor</span>
+          <div class="mp-panel-controls">
+            <button class="mp-btn" id="mp-minimize-btn">_</button>
+          </div>
+        </div>
+        <div class="mp-status-bar">
+          <div class="mp-status-dot" id="mp-status-dot"></div>
+          <span id="mp-status-text">Ready</span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <button class="mp-btn mp-btn-primary" id="mp-predict-btn">
+            🎯 Predict Current Round
+          </button>
+          <button class="mp-btn" id="mp-logs-btn">
+            📋 View Logs
+          </button>
+        </div>
+      `;
+      document.body.appendChild(panel);
+      this.panel = panel;
 
-      .mp-prediction-badge.team2 {
-        background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
-        color: #1e3a5f;
-      }
+      // Event Listeners
+      document.getElementById('mp-minimize-btn').addEventListener('click', () => this.toggleMinimize());
+      document.getElementById('mp-logs-btn').addEventListener('click', () => this.toggleLogModal());
+      
+      // Predict button listener is attached by the main controller
+    }
 
-      .mp-prediction-badge.uncertain {
-        background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
-        color: #451a03;
-      }
+    createLogModal() {
+      const modal = document.createElement('div');
+      modal.className = 'mp-log-modal hidden';
+      modal.innerHTML = `
+        <div class="mp-log-header">
+          <span class="mp-panel-title">Prediction Logs</span>
+          <button class="mp-btn" id="mp-close-logs">✕</button>
+        </div>
+        <div class="mp-log-content" id="mp-log-content"></div>
+      `;
+      document.body.appendChild(modal);
+      this.logModal = modal;
 
-      .mp-prediction-badge.loading {
-        background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%);
-        color: #f1f5f9;
-      }
+      document.getElementById('mp-close-logs').addEventListener('click', () => this.toggleLogModal());
+    }
 
-      .mp-prediction-badge.error {
-        background: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
-        color: #450a0a;
-      }
+    toggleMinimize() {
+      this.isMinimized = !this.isMinimized;
+      this.panel.classList.toggle('minimized', this.isMinimized);
+    }
 
-      .mp-confidence {
-        font-size: 10px;
-        opacity: 0.9;
-        background: rgba(0, 0, 0, 0.2);
-        padding: 2px 6px;
-        border-radius: 4px;
-      }
+    toggleLogModal() {
+      this.logModal.classList.toggle('hidden');
+    }
 
-      .mp-tooltip {
-        position: absolute;
-        bottom: calc(100% + 8px);
-        left: 50%;
-        transform: translateX(-50%);
-        background: #1e293b;
-        color: #f8fafc;
-        padding: 12px 16px;
-        border-radius: 8px;
-        font-size: 12px;
-        font-weight: 400;
-        min-width: 280px;
-        max-width: 350px;
-        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
-        z-index: 10000;
-        opacity: 0;
-        visibility: hidden;
-        transition: opacity 0.2s, visibility 0.2s;
-        text-align: left;
-        line-height: 1.5;
-      }
+    updateStatus(status, text) {
+      const dot = document.getElementById('mp-status-dot');
+      const label = document.getElementById('mp-status-text');
+      const btn = document.getElementById('mp-predict-btn');
 
-      .mp-tooltip::after {
-        content: '';
-        position: absolute;
-        top: 100%;
-        left: 50%;
-        transform: translateX(-50%);
-        border: 8px solid transparent;
-        border-top-color: #1e293b;
-      }
+      dot.className = 'mp-status-dot ' + status;
+      label.textContent = text;
 
-      .mp-prediction-badge:hover .mp-tooltip {
-        opacity: 1;
-        visibility: visible;
+      if (status === 'busy') {
+        btn.disabled = true;
+        btn.textContent = '⏳ Processing...';
+      } else {
+        btn.disabled = false;
+        btn.textContent = '🎯 Predict Current Round';
       }
+    }
 
-      .mp-tooltip-header {
-        font-weight: 600;
-        font-size: 14px;
-        margin-bottom: 8px;
-        padding-bottom: 8px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-      }
+    appendLogEntry(entry) {
+      const container = document.getElementById('mp-log-content');
+      if (!container) return;
 
-      .mp-tooltip-section {
-        margin-bottom: 8px;
-      }
-
-      .mp-tooltip-section:last-child {
-        margin-bottom: 0;
-      }
-
-      .mp-tooltip-label {
-        font-size: 10px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        color: #94a3b8;
-        margin-bottom: 4px;
-      }
-
-      .mp-tooltip-factors {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-      }
-
-      .mp-tooltip-factors li {
-        padding: 2px 0;
-        padding-left: 16px;
-        position: relative;
-      }
-
-      .mp-tooltip-factors li::before {
-        content: '•';
-        position: absolute;
-        left: 0;
-        color: #4ade80;
-      }
-
-      .mp-match-container {
-        position: relative;
-      }
-
-      .mp-analyze-btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        padding: 4px 8px;
-        background: linear-gradient(135deg, #e94560 0%, #c73e54 100%);
-        color: white;
-        border: none;
-        border-radius: 4px;
-        font-size: 11px;
-        cursor: pointer;
-        margin-left: 8px;
-        transition: all 0.2s ease;
-      }
-
-      .mp-analyze-btn:hover {
-        transform: scale(1.05);
-        background: linear-gradient(135deg, #c73e54 0%, #a33548 100%);
-      }
-
-      .mp-analyze-btn:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-        transform: none;
-      }
-    `;
-    document.head.appendChild(style);
+      const div = document.createElement('div');
+      div.className = 'mp-log-entry';
+      
+      const time = entry.timestamp.toLocaleTimeString();
+      const typeClass = `mp-log-${entry.type}`;
+      
+      div.innerHTML = `
+        <span class="mp-log-time">[${time}]</span>
+        <span class="${typeClass}">${entry.message}</span>
+      `;
+      
+      container.appendChild(div);
+      container.scrollTop = container.scrollHeight;
+    }
   }
 
-  // Find and process match elements on the page
-  function findMatches() {
-    // Common match container selectors - may need adjustment based on majors.im structure
-    const matchSelectors = [
-      '[class*="match"]',
-      '[class*="game"]',
-      '[class*="fixture"]',
-      'div[data-match]',
-      '.bracket-match',
-      '.match-item',
-      '.upcoming-match'
-    ];
+  // --- Prediction Engine Class ---
+  class PredictionEngine {
+    constructor(uiManager) {
+      this.ui = uiManager;
+      this.predictions = new Map();
+      this.isAnalyzing = false;
+    }
 
-    const matches = [];
-    
-    // Try each selector
-    for (const selector of matchSelectors) {
-      const elements = document.querySelectorAll(selector);
-      elements.forEach(el => {
-        // Look for team names within the element
-        const teamElements = findTeamElements(el);
-        if (teamElements.team1 && teamElements.team2) {
+    async predictVisibleMatches() {
+      if (this.isAnalyzing) return;
+
+      this.isAnalyzing = true;
+      this.ui.updateStatus('busy', 'Scanning matches...');
+      logger.info('Starting prediction scan...');
+
+      try {
+        const matches = this.findMatches();
+        
+        if (matches.length === 0) {
+          logger.warn('No matches found on screen.');
+          this.ui.updateStatus('active', 'No matches found');
+          this.isAnalyzing = false;
+          return;
+        }
+
+        // Filter unpredicted matches
+        const pendingMatches = matches.filter(m => !this.predictions.has(m.id));
+
+        if (pendingMatches.length === 0) {
+          logger.info('All visible matches already predicted.');
+          this.ui.updateStatus('active', 'All predicted');
+          this.isAnalyzing = false;
+          return;
+        }
+
+        // Sort by round index to ensure we process Round 1 -> Round 2 -> ...
+        pendingMatches.sort((a, b) => a.roundIndex - b.roundIndex);
+
+        // Identify the target round (the earliest unpredicted round)
+        const targetRoundIndex = pendingMatches[0].roundIndex;
+        const targetRoundName = pendingMatches[0].round;
+
+        // Select only matches from this specific round
+        const currentRoundMatches = pendingMatches.filter(m => m.roundIndex === targetRoundIndex);
+
+        logger.info(`Targeting ${targetRoundName} (${currentRoundMatches.length} matches)...`);
+        this.ui.updateStatus('busy', `Predicting ${targetRoundName}...`);
+
+        // Mark all as loading first
+        currentRoundMatches.forEach(m => this.addBadge(m.element, { status: 'loading', text: '...' }, m.id));
+
+        // Execute concurrently for this round
+        const results = await Promise.allSettled(currentRoundMatches.map(m => this.analyzeMatch(m)));
+
+        const successCount = results.filter(r => r.status === 'fulfilled' && r.value).length;
+        logger.success(`${targetRoundName} complete. ${successCount}/${currentRoundMatches.length} predicted.`);
+        
+        // Check if there are more rounds pending
+        const remaining = matches.filter(m => !this.predictions.has(m.id) && m.roundIndex > targetRoundIndex);
+        
+        if (remaining.length > 0) {
+            // Find the next round number
+            remaining.sort((a, b) => a.roundIndex - b.roundIndex);
+            const nextRound = remaining[0].round;
+            this.ui.updateStatus('active', `Next: ${nextRound}`);
+            logger.info(`Paused. Click button to predict ${nextRound}.`);
+        } else {
+            this.ui.updateStatus('active', 'All Rounds Complete');
+        }
+
+      } catch (error) {
+        logger.error(`Critical error: ${error.message}`);
+        this.ui.updateStatus('error', 'Error occurred');
+      } finally {
+        this.isAnalyzing = false;
+      }
+    }
+
+    findMatches() {
+      const matches = [];
+      // Selectors for majors.im, including specific bracket classes
+      const matchElements = document.querySelectorAll('.match, .bracket-match, [class*="match-"], [class*="bracket_match"]');
+      
+      matchElements.forEach(el => {
+        const teams = this.extractTeams(el);
+        if (teams) {
+          const id = `${teams.team1}-vs-${teams.team2}`.toLowerCase().replace(/[^a-z0-9]/g, '-');
+          const roundInfo = this.getRoundInfo(el);
+          
           matches.push({
             element: el,
-            team1: teamElements.team1,
-            team2: teamElements.team2,
-            tournament: findTournamentName(el),
-            matchType: findMatchType(el)
+            id: id,
+            team1: teams.team1,
+            team2: teams.team2,
+            tournament: document.title,
+            round: roundInfo.name,
+            roundIndex: roundInfo.index
           });
         }
       });
-    }
 
-    // Also try to find any elements containing team vs team patterns
-    const allText = document.body.innerText;
-    
-    return matches;
-  }
-
-  // Find team name elements within a match container
-  function findTeamElements(container) {
-    const result = { team1: null, team2: null };
-    
-    // Common team selectors
-    const teamSelectors = [
-      '[class*="team-name"]',
-      '[class*="teamName"]',
-      '[class*="team"] [class*="name"]',
-      '.team-1',
-      '.team-2',
-      '[class*="opponent"]',
-      '[data-team]'
-    ];
-
-    const teams = [];
-    
-    for (const selector of teamSelectors) {
-      const elements = container.querySelectorAll(selector);
-      elements.forEach(el => {
-        const name = el.textContent.trim();
-        if (name && name.length > 1 && name.length < 30 && !teams.includes(name)) {
-          teams.push(name);
-        }
-      });
-    }
-
-    // Also look for images with alt text containing team names
-    const images = container.querySelectorAll('img[alt]');
-    images.forEach(img => {
-      const alt = img.alt.trim();
-      if (alt && alt.length > 1 && alt.length < 30 && !teams.includes(alt)) {
-        teams.push(alt);
-      }
-    });
-
-    if (teams.length >= 2) {
-      result.team1 = teams[0];
-      result.team2 = teams[1];
-    }
-
-    return result;
-  }
-
-  // Find tournament name from context
-  function findTournamentName(container) {
-    const selectors = [
-      '[class*="tournament"]',
-      '[class*="event"]',
-      '[class*="league"]',
-      'h1', 'h2', 'h3'
-    ];
-
-    for (const selector of selectors) {
-      const el = container.closest('[class*="event"]') || document.querySelector(selector);
-      if (el) {
-        const text = el.textContent.trim();
-        if (text.length > 3 && text.length < 100) {
-          return text;
-        }
-      }
-    }
-
-    return 'CS2 Major';
-  }
-
-  // Find match type (BO1, BO3, etc.)
-  function findMatchType(container) {
-    const text = container.textContent.toLowerCase();
-    if (text.includes('bo5') || text.includes('best of 5')) return 'Best of 5';
-    if (text.includes('bo3') || text.includes('best of 3')) return 'Best of 3';
-    if (text.includes('bo1') || text.includes('best of 1')) return 'Best of 1';
-    return 'Best of 3';
-  }
-
-  // Start prediction process
-  async function startPrediction() {
-    if (isAnalyzing) {
-      console.log('[Major Predictor] Already analyzing...');
-      return;
-    }
-
-    isAnalyzing = true;
-    console.log('[Major Predictor] Starting match analysis...');
-
-    try {
-      // Find all matches on the page
-      const matches = findMatches();
-      console.log(`[Major Predictor] Found ${matches.length} matches`);
-
+      // Fallback for text-based detection if specific classes aren't found
       if (matches.length === 0) {
-        // Try alternative approach - analyze visible team names
-        await analyzeVisibleTeams();
-        isAnalyzing = false;
-        return;
-      }
+        const knownTeams = [
+          'Natus Vincere', 'NAVI', 'G2', 'G2 Esports', 'FaZe', 'FaZe Clan',
+          'Vitality', 'Team Vitality', 'Astralis', 'MOUZ', 'mousesports',
+          'Spirit', 'Team Spirit', 'Heroic', 'Cloud9', 'Complexity',
+          'Liquid', 'Team Liquid', 'ENCE', 'BIG', 'Eternal Fire',
+          'paiN', 'FURIA', 'Imperial', 'Monte', 'GamerLegion',
+          'MIBR', 'TheMongolz', 'Virtus.pro', 'VP', 'Falcons',
+          '9z', 'SAW', 'Aurora', 'fnatic', 'NIP', 'Ninjas in Pyjamas'
+        ];
 
-      // Analyze each match
-      for (const match of matches) {
-        await analyzeMatch(match);
-        // Small delay between requests
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-    } catch (error) {
-      console.error('[Major Predictor] Error during analysis:', error);
-    } finally {
-      isAnalyzing = false;
-    }
-  }
-
-  // Analyze visible teams on the page
-  async function analyzeVisibleTeams() {
-    // Get page content for analysis
-    const pageContent = document.body.innerText;
-    
-    // Common CS2 team names to look for
-    const knownTeams = [
-      'Natus Vincere', 'NAVI', 'G2', 'G2 Esports', 'FaZe', 'FaZe Clan',
-      'Vitality', 'Team Vitality', 'Astralis', 'MOUZ', 'mousesports',
-      'Spirit', 'Team Spirit', 'Heroic', 'Cloud9', 'Complexity',
-      'Liquid', 'Team Liquid', 'ENCE', 'BIG', 'Eternal Fire',
-      'paiN', 'FURIA', 'Imperial', 'Monte', 'GamerLegion',
-      'MIBR', 'TheMongolz', 'Virtus.pro', 'VP', 'Falcons',
-      '9z', 'SAW', 'Aurora', 'fnatic', 'NIP', 'Ninjas in Pyjamas'
-    ];
-
-    // Find teams mentioned on the page
-    const foundTeams = [];
-    for (const team of knownTeams) {
-      if (pageContent.toLowerCase().includes(team.toLowerCase())) {
-        foundTeams.push(team);
-      }
-    }
-
-    console.log('[Major Predictor] Found teams:', foundTeams);
-
-    // Create match pairs from adjacent teams
-    for (let i = 0; i < foundTeams.length - 1; i += 2) {
-      const matchData = {
-        team1: foundTeams[i],
-        team2: foundTeams[i + 1],
-        tournament: document.title || 'CS2 Major',
-        matchType: 'Best of 3'
-      };
-
-      await createPredictionBadgeForPage(matchData);
-    }
-  }
-
-  // Analyze a single match
-  async function analyzeMatch(match) {
-    const matchId = `${match.team1}-vs-${match.team2}`.toLowerCase().replace(/\s+/g, '-');
-    
-    // Check if already predicted
-    if (predictions.has(matchId)) {
-      return;
-    }
-
-    // Add loading badge
-    addPredictionBadge(match.element, {
-      status: 'loading',
-      text: 'Analyzing...'
-    }, matchId);
-
-    try {
-      // Get prediction from background script
-      const response = await chrome.runtime.sendMessage({
-        action: 'getPrediction',
-        matchData: {
-          team1: match.team1,
-          team2: match.team2,
-          tournament: match.tournament,
-          matchType: match.matchType
-        }
-      });
-
-      if (response.success) {
-        predictions.set(matchId, response.prediction);
-        updatePredictionBadge(match.element, response.prediction, matchId);
-      } else {
-        throw new Error(response.error);
-      }
-    } catch (error) {
-      console.error(`[Major Predictor] Error analyzing ${match.team1} vs ${match.team2}:`, error);
-      addPredictionBadge(match.element, {
-        status: 'error',
-        text: 'Error',
-        error: error.message
-      }, matchId);
-    }
-  }
-
-  // Create a prediction badge for page-level display
-  async function createPredictionBadgeForPage(matchData) {
-    const matchId = `${matchData.team1}-vs-${matchData.team2}`.toLowerCase().replace(/\s+/g, '-');
-    
-    if (predictions.has(matchId)) return;
-
-    // Create a floating prediction container
-    let container = document.getElementById('mp-predictions-container');
-    if (!container) {
-      container = document.createElement('div');
-      container.id = 'mp-predictions-container';
-      container.style.cssText = `
-        position: fixed;
-        top: 80px;
-        right: 20px;
-        z-index: 9999;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        max-height: calc(100vh - 100px);
-        overflow-y: auto;
-        padding: 10px;
-      `;
-      document.body.appendChild(container);
-    }
-
-    // Create match prediction card
-    const card = document.createElement('div');
-    card.id = `mp-${matchId}`;
-    card.style.cssText = `
-      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-      border-radius: 12px;
-      padding: 16px;
-      min-width: 280px;
-      color: white;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
-    `;
-    card.innerHTML = `
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-        <span style="font-size: 13px; font-weight: 600;">${matchData.team1}</span>
-        <span style="font-size: 11px; color: #64748b;">vs</span>
-        <span style="font-size: 13px; font-weight: 600;">${matchData.team2}</span>
-      </div>
-      <div class="mp-prediction-status" style="text-align: center; padding: 8px; background: rgba(255,255,255,0.1); border-radius: 6px;">
-        <span style="font-size: 12px; color: #94a3b8;">⏳ Analyzing...</span>
-      </div>
-    `;
-    container.appendChild(card);
-
-    try {
-      const response = await chrome.runtime.sendMessage({
-        action: 'getPrediction',
-        matchData: matchData
-      });
-
-      const statusEl = card.querySelector('.mp-prediction-status');
-
-      if (response.success) {
-        const pred = response.prediction;
-        predictions.set(matchId, pred);
-
-        const isTeam1 = pred.predictedWinner === matchData.team1;
-        const color = isTeam1 ? '#4ade80' : '#60a5fa';
+        const foundTeams = [];
+        const allElements = document.body.getElementsByTagName('*');
         
-        statusEl.innerHTML = `
-          <div style="font-size: 14px; font-weight: 600; color: ${color}; margin-bottom: 4px;">
-            🎯 ${pred.predictedWinner}
-          </div>
-          ${pred.confidence ? `<div style="font-size: 11px; color: #94a3b8;">Confidence: ${pred.confidence}%</div>` : ''}
-          ${pred.predictedScore ? `<div style="font-size: 11px; color: #94a3b8;">Score: ${pred.predictedScore}</div>` : ''}
-          ${pred.briefAnalysis ? `<div style="font-size: 11px; color: #cbd5e1; margin-top: 8px; line-height: 1.4;">${pred.briefAnalysis.substring(0, 150)}...</div>` : ''}
-        `;
-      } else {
-        statusEl.innerHTML = `<span style="font-size: 12px; color: #f87171;">❌ ${response.error}</span>`;
+        for (let el of allElements) {
+            // Look for leaf nodes with text
+            if (el.children.length === 0 && el.textContent.trim().length > 0) {
+                const text = el.textContent.trim();
+                // Check if text matches a known team exactly or contains it
+                const match = knownTeams.find(t => text === t || (text.length < 30 && text.includes(t)));
+                if (match) {
+                    foundTeams.push({ element: el, name: match });
+                }
+            }
+        }
+
+        // Pair them up sequentially
+        for (let i = 0; i < foundTeams.length - 1; i += 2) {
+            const t1 = foundTeams[i];
+            const t2 = foundTeams[i+1];
+            
+            const id = `${t1.name}-vs-${t2.name}`.toLowerCase().replace(/[^a-z0-9]/g, '-');
+            
+            // Find a common parent to attach the badge
+            let commonParent = t1.element.parentElement;
+            // Go up at most 5 levels to find a common container
+            let levels = 0;
+            let container = commonParent;
+            while (container && levels < 5) {
+                if (container.contains(t2.element)) {
+                    break;
+                }
+                container = container.parentElement;
+                levels++;
+            }
+            
+            if (container && levels < 5) {
+                const roundInfo = this.getRoundInfo(container);
+                matches.push({
+                    element: container,
+                    id: id,
+                    team1: t1.name,
+                    team2: t2.name,
+                    tournament: document.title,
+                    round: roundInfo.name,
+                    roundIndex: roundInfo.index
+                });
+            }
+        }
       }
-    } catch (error) {
-      const statusEl = card.querySelector('.mp-prediction-status');
-      statusEl.innerHTML = `<span style="font-size: 12px; color: #f87171;">❌ ${error.message}</span>`;
-    }
-  }
 
-  // Add prediction badge to match element
-  function addPredictionBadge(element, data, matchId) {
-    // Remove existing badge if any
-    const existingBadge = element.querySelector(`#mp-badge-${matchId}`);
-    if (existingBadge) {
-      existingBadge.remove();
+      return matches;
     }
 
-    const badge = document.createElement('span');
-    badge.id = `mp-badge-${matchId}`;
-    badge.className = `mp-prediction-badge ${data.status}`;
-    
-    if (data.status === 'loading') {
-      badge.innerHTML = `<span>⏳</span><span>${data.text}</span>`;
-    } else if (data.status === 'error') {
+    getRoundInfo(element) {
+        let current = element;
+        let depth = 0;
+        // Traverse up to find a container that has a "Round X" header sibling or child
+        while (current && current !== document.body && depth < 6) {
+            if (current.parentElement) {
+                const siblings = Array.from(current.parentElement.children);
+                // Look for a sibling that contains "Round X" text
+                const header = siblings.find(s => {
+                    if (s === current) return false;
+                    const text = s.textContent?.trim();
+                    return text && /^Round\s+\d+/i.test(text);
+                });
+                
+                if (header) {
+                    const text = header.textContent.trim();
+                    const match = text.match(/^Round\s+(\d+)/i);
+                    return {
+                        name: text,
+                        index: match ? parseInt(match[1], 10) : 999
+                    };
+                }
+            }
+            current = current.parentElement;
+            depth++;
+        }
+        return { name: 'Unknown Round', index: 999 };
+    }
+
+    extractTeams(element) {
+      // Heuristic to find team names within a match element
+      // Look for elements with 'team' in class or just two distinct text blocks
+      const candidates = [];
+      
+      // Strategy 1: Specific classes
+      const teamEls = element.querySelectorAll('[class*="team"], .name, strong');
+      teamEls.forEach(t => {
+        const text = t.textContent.trim();
+        if (text.length > 1 && text.length < 20) candidates.push(text);
+      });
+
+      // Strategy 2: Images with alt tags
+      if (candidates.length < 2) {
+        const imgs = element.querySelectorAll('img[alt]');
+        imgs.forEach(img => {
+          const alt = img.alt.trim();
+          if (alt.length > 1) candidates.push(alt);
+        });
+      }
+
+      if (candidates.length >= 2) {
+        // Filter duplicates and take first two
+        const unique = [...new Set(candidates)];
+        if (unique.length >= 2) {
+          return { team1: unique[0], team2: unique[1] };
+        }
+      }
+      return null;
+    }
+
+    async analyzeMatch(match) {
+      try {
+        logger.info(`Analyzing: ${match.team1} vs ${match.team2}`);
+        
+        const response = await chrome.runtime.sendMessage({
+          action: 'getPrediction',
+          matchData: {
+            team1: match.team1,
+            team2: match.team2,
+            tournament: match.tournament
+          }
+        });
+
+        if (response.success) {
+          this.predictions.set(match.id, response.prediction);
+          this.updateBadge(match.element, response.prediction, match.id);
+          logger.success(`Predicted: ${match.team1} vs ${match.team2} -> ${response.prediction.predictedWinner}`);
+          return true;
+        } else {
+          throw new Error(response.error);
+        }
+      } catch (error) {
+        logger.error(`Failed ${match.team1} vs ${match.team2}: ${error.message}`);
+        this.addBadge(match.element, { status: 'error', text: 'Err', error: error.message }, match.id);
+        return false;
+      }
+    }
+
+    addBadge(element, data, id) {
+      const existing = element.querySelector(`#mp-badge-${id}`);
+      if (existing) existing.remove();
+
+      const badge = document.createElement('div');
+      badge.id = `mp-badge-${id}`;
+      badge.className = `mp-prediction-badge ${data.status}`;
+      badge.innerHTML = `<span>${data.text}</span>`;
+      
+      if (data.error) {
+        badge.title = data.error;
+      }
+
+      // Insert logic: try to put it between teams or at the end
+      element.style.position = 'relative';
+      element.appendChild(badge);
+    }
+
+    updateBadge(element, prediction, id) {
+      const existing = element.querySelector(`#mp-badge-${id}`);
+      if (existing) existing.remove();
+
+      const isTeam1 = prediction.predictedWinner === prediction.team1;
+      const badgeClass = prediction.predictedWinner === 'Uncertain' ? 'uncertain' : (isTeam1 ? 'team1' : 'team2');
+      
+      const badge = document.createElement('div');
+      badge.id = `mp-badge-${id}`;
+      badge.className = `mp-prediction-badge ${badgeClass}`;
+      
+      const confidence = prediction.confidence ? `<span style="font-size:0.8em; opacity:0.8; margin-left:4px">${prediction.confidence}%</span>` : '';
+      
       badge.innerHTML = `
-        <span>❌</span>
-        <span>${data.text}</span>
+        <span>${prediction.predictedWinner}</span>
+        ${confidence}
         <div class="mp-tooltip">
-          <div class="mp-tooltip-header">Prediction Error</div>
-          <div>${data.error || 'Unknown error occurred'}</div>
+          <div class="mp-tooltip-header">Analysis</div>
+          <div>${prediction.briefAnalysis || 'No analysis available'}</div>
+          <div style="margin-top:8px; font-size:0.9em; color:#aaa">
+            Risk: ${prediction.riskLevel || 'Unknown'}
+          </div>
         </div>
       `;
-    }
 
-    // Find best place to insert badge
-    const insertTarget = findBadgeInsertTarget(element);
-    if (insertTarget) {
-      insertTarget.appendChild(badge);
-    } else {
       element.appendChild(badge);
     }
   }
 
-  // Update prediction badge with results
-  function updatePredictionBadge(element, prediction, matchId) {
-    const existingBadge = element.querySelector(`#mp-badge-${matchId}`);
-    if (!existingBadge) return;
+  // --- Initialization ---
+  const ui = new UIManager();
+  const engine = new PredictionEngine(ui);
 
-    const isTeam1 = prediction.predictedWinner === prediction.team1;
-    const badgeClass = prediction.predictedWinner === 'Uncertain' ? 'uncertain' : (isTeam1 ? 'team1' : 'team2');
+  function init() {
+    console.log('[Major Predictor] Initializing v2...');
+    ui.init();
     
-    existingBadge.className = `mp-prediction-badge ${badgeClass}`;
-    
-    let confidenceHtml = '';
-    if (settings.showConfidence && prediction.confidence) {
-      confidenceHtml = `<span class="mp-confidence">${prediction.confidence}%</span>`;
-    }
-
-    let factorsHtml = '';
-    if (prediction.keyFactors && prediction.keyFactors.length > 0) {
-      factorsHtml = `
-        <div class="mp-tooltip-section">
-          <div class="mp-tooltip-label">Key Factors</div>
-          <ul class="mp-tooltip-factors">
-            ${prediction.keyFactors.slice(0, 3).map(f => `<li>${f}</li>`).join('')}
-          </ul>
-        </div>
-      `;
-    }
-
-    existingBadge.innerHTML = `
-      <span>🎯</span>
-      <span>${prediction.predictedWinner}</span>
-      ${confidenceHtml}
-      <div class="mp-tooltip">
-        <div class="mp-tooltip-header">
-          ${prediction.predictedWinner} to win
-          ${prediction.predictedScore ? `(${prediction.predictedScore})` : ''}
-        </div>
-        ${factorsHtml}
-        ${prediction.briefAnalysis ? `
-          <div class="mp-tooltip-section">
-            <div class="mp-tooltip-label">Analysis</div>
-            <div>${prediction.briefAnalysis}</div>
-          </div>
-        ` : ''}
-        ${prediction.riskLevel ? `
-          <div class="mp-tooltip-section">
-            <div style="color: ${prediction.riskLevel === 'high' ? '#f87171' : prediction.riskLevel === 'medium' ? '#fbbf24' : '#4ade80'};">
-              Risk: ${prediction.riskLevel.charAt(0).toUpperCase() + prediction.riskLevel.slice(1)}
-            </div>
-          </div>
-        ` : ''}
-      </div>
-    `;
-  }
-
-  // Find best target element for inserting badge
-  function findBadgeInsertTarget(container) {
-    // Look for team name containers or match info areas
-    const selectors = [
-      '[class*="match-info"]',
-      '[class*="matchInfo"]',
-      '[class*="team-container"]',
-      '[class*="versus"]',
-      '[class*="vs"]'
-    ];
-
-    for (const selector of selectors) {
-      const el = container.querySelector(selector);
-      if (el) return el;
-    }
-
-    return null;
-  }
-
-  // Observe DOM for dynamically loaded matches
-  function observeMatches() {
-    const observer = new MutationObserver((mutations) => {
-      let shouldReanalyze = false;
-      
-      for (const mutation of mutations) {
-        if (mutation.addedNodes.length > 0) {
-          for (const node of mutation.addedNodes) {
-            if (node.nodeType === Node.ELEMENT_NODE) {
-              if (node.matches && (
-                node.matches('[class*="match"]') ||
-                node.matches('[class*="game"]') ||
-                node.matches('[class*="fixture"]')
-              )) {
-                shouldReanalyze = true;
-                break;
-              }
-            }
-          }
-        }
-      }
-
-      if (shouldReanalyze && settings.autoPredict && !isAnalyzing) {
-        setTimeout(() => startPrediction(), 1000);
-      }
+    // Bind predict button
+    document.getElementById('mp-predict-btn').addEventListener('click', () => {
+      engine.predictVisibleMatches();
     });
 
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true
-    });
+    logger.info('Extension ready. Click "Predict Current Round" to start.');
   }
 
-  console.log('[Major Predictor] Content script loaded');
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+
 })();

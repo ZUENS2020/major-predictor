@@ -2,6 +2,7 @@
 
 document.addEventListener('DOMContentLoaded', async () => {
   const apiKeyInput = document.getElementById('api-key');
+  const tavilyApiKeyInput = document.getElementById('tavily-api-key');
   const modelSelect = document.getElementById('model');
   const autoPredictToggle = document.getElementById('auto-predict');
   const showConfidenceToggle = document.getElementById('show-confidence');
@@ -25,6 +26,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Load saved settings
   const settings = await chrome.storage.sync.get([
     'openRouterApiKey',
+    'tavilyApiKey',
     'aiModel',
     'autoPredict',
     'showConfidence',
@@ -33,6 +35,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   if (settings.openRouterApiKey) {
     apiKeyInput.value = settings.openRouterApiKey;
+  }
+  if (settings.tavilyApiKey) {
+    tavilyApiKeyInput.value = settings.tavilyApiKey;
   }
   autoPredictToggle.checked = settings.autoPredict || false;
   showConfidenceToggle.checked = settings.showConfidence !== false; // Default true
@@ -140,6 +145,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Save settings
   saveBtn.addEventListener('click', async () => {
     const apiKey = apiKeyInput.value.trim();
+    const tavilyKey = tavilyApiKeyInput.value.trim();
     
     if (!apiKey) {
       alertError.textContent = '✗ Please enter an API key';
@@ -150,6 +156,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       await chrome.storage.sync.set({
         openRouterApiKey: apiKey,
+        tavilyApiKey: tavilyKey,
         aiModel: modelSelect.value,
         autoPredict: autoPredictToggle.checked,
         showConfidence: showConfidenceToggle.checked,
