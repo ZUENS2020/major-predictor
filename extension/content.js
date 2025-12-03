@@ -98,17 +98,11 @@
       .mp-prediction-badge.loading {
         background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%);
         color: #f1f5f9;
-        animation: pulse 1.5s ease-in-out infinite;
       }
 
       .mp-prediction-badge.error {
         background: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
         color: #450a0a;
-      }
-
-      @keyframes pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.6; }
       }
 
       .mp-confidence {
@@ -364,6 +358,7 @@
       if (matches.length === 0) {
         // Try alternative approach - analyze visible team names
         await analyzeVisibleTeams();
+        isAnalyzing = false;
         return;
       }
 

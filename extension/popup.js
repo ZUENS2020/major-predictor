@@ -71,6 +71,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     chrome.runtime.openOptionsPage();
   });
 
+  // Configure API Key link click
+  const configLink = document.getElementById('config-link');
+  if (configLink) {
+    configLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      chrome.runtime.openOptionsPage();
+    });
+  }
+
   // Auto-predict toggle
   autoPredict.addEventListener('change', async (e) => {
     await chrome.storage.sync.set({ autoPredict: e.target.checked });

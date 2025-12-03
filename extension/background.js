@@ -48,19 +48,10 @@ async function fetchHLTVData(teamName) {
       lastUpdated: new Date().toISOString()
     };
 
-    // Try to fetch from HLTV (may be blocked by CORS)
-    try {
-      const response = await fetch(`https://www.hltv.org/search?query=${encodeURIComponent(teamName)}`);
-      if (response.ok) {
-        // Parse response if available
-        const text = await response.text();
-        // Extract data from HTML (simplified)
-        teamData.dataAvailable = true;
-      }
-    } catch (fetchError) {
-      console.log('HLTV direct fetch not available, using AI context');
-      teamData.dataAvailable = false;
-    }
+    // Note: Direct HLTV fetch is not possible due to CORS restrictions
+    // The AI model will use its trained knowledge of teams instead
+    // For production use, consider implementing a backend proxy service
+    teamData.dataAvailable = false;
 
     return teamData;
   } catch (error) {
@@ -106,7 +97,7 @@ Always provide your analysis in a structured JSON format.`
             content: prompt
           }
         ],
-        max_tokens: 1000,
+        max_tokens: 1500,
         temperature: 0.7
       })
     });
