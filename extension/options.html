@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Major Predictor - Settings</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      min-height: 100vh;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      color: #ffffff;
+      padding: 40px 20px;
+    }
+
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+
+    .logo {
+      width: 48px;
+      height: 48px;
+      background: linear-gradient(135deg, #e94560 0%, #0f3460 100%);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 20px;
+    }
+
+    h1 {
+      font-size: 28px;
+      font-weight: 600;
+    }
+
+    .card {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+
+    .card-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-description {
+      color: rgba(255, 255, 255, 0.6);
+      font-size: 14px;
+      margin-bottom: 20px;
+      line-height: 1.5;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    .form-group:last-child {
+      margin-bottom: 0;
+    }
+
+    label {
+      display: block;
+      font-size: 14px;
+      font-weight: 500;
+      margin-bottom: 8px;
+      color: rgba(255, 255, 255, 0.9);
+    }
+
+    input[type="text"],
+    input[type="password"],
+    select {
+      width: 100%;
+      padding: 12px 16px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.1);
+      color: #ffffff;
+      font-size: 14px;
+      transition: border-color 0.2s, background 0.2s;
+    }
+
+    input[type="text"]:focus,
+    input[type="password"]:focus,
+    select:focus {
+      outline: none;
+      border-color: #e94560;
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    input::placeholder {
+      color: rgba(255, 255, 255, 0.4);
+    }
+
+    select option {
+      background: #16213e;
+      color: #ffffff;
+    }
+
+    .btn {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #e94560 0%, #c73e54 100%);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #c73e54 0%, #a33548 100%);
+      transform: translateY(-1px);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.1);
+      color: white;
+      margin-left: 12px;
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    .alert {
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      margin-bottom: 20px;
+      display: none;
+    }
+
+    .alert-success {
+      background: rgba(74, 222, 128, 0.2);
+      border: 1px solid rgba(74, 222, 128, 0.3);
+      color: #4ade80;
+    }
+
+    .alert-error {
+      background: rgba(248, 113, 113, 0.2);
+      border: 1px solid rgba(248, 113, 113, 0.3);
+      color: #f87171;
+    }
+
+    .help-text {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.5);
+      margin-top: 8px;
+    }
+
+    a {
+      color: #e94560;
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .toggle-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .toggle-row:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
+    .toggle-info {
+      flex: 1;
+    }
+
+    .toggle-label {
+      font-size: 14px;
+      font-weight: 500;
+      margin-bottom: 4px;
+    }
+
+    .toggle-description {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.5);
+    }
+
+    .toggle {
+      position: relative;
+      width: 44px;
+      height: 24px;
+      flex-shrink: 0;
+      margin-left: 16px;
+    }
+
+    .toggle input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: rgba(255, 255, 255, 0.2);
+      transition: 0.3s;
+      border-radius: 24px;
+    }
+
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: 0.3s;
+      border-radius: 50%;
+    }
+
+    .toggle input:checked + .toggle-slider {
+      background: linear-gradient(135deg, #e94560 0%, #c73e54 100%);
+    }
+
+    .toggle input:checked + .toggle-slider:before {
+      transform: translateX(20px);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">MP</div>
+      <h1>Major Predictor Settings</h1>
+    </div>
+
+    <div id="alert-success" class="alert alert-success">
+      ✓ Settings saved successfully!
+    </div>
+    
+    <div id="alert-error" class="alert alert-error">
+      ✗ Error saving settings
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">🔑 API Configuration</h2>
+      <p class="card-description">
+        Configure your OpenRouter API key to enable AI-powered match predictions.
+        Get your API key from <a href="https://openrouter.ai/keys" target="_blank">OpenRouter</a>.
+      </p>
+
+      <div class="form-group">
+        <label for="api-key">OpenRouter API Key</label>
+        <input 
+          type="password" 
+          id="api-key" 
+          placeholder="sk-or-v1-..."
+          autocomplete="off"
+        >
+        <p class="help-text">Your API key is stored locally and never shared.</p>
+      </div>
+
+      <div class="form-group">
+        <label for="model">AI Model</label>
+        <select id="model">
+          <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet (Recommended)</option>
+          <option value="anthropic/claude-3-haiku">Claude 3 Haiku (Fast)</option>
+          <option value="openai/gpt-4o">GPT-4o</option>
+          <option value="openai/gpt-4o-mini">GPT-4o Mini (Budget)</option>
+          <option value="google/gemini-pro-1.5">Gemini Pro 1.5</option>
+          <option value="meta-llama/llama-3.1-70b-instruct">Llama 3.1 70B</option>
+        </select>
+        <p class="help-text">Choose the AI model for generating predictions.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">⚙️ Preferences</h2>
+      <p class="card-description">
+        Customize how the extension behaves on majors.im.
+      </p>
+
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-label">Auto Predict</div>
+          <div class="toggle-description">Automatically analyze matches when visiting majors.im</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="auto-predict">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-label">Show Confidence Score</div>
+          <div class="toggle-description">Display AI confidence percentage with predictions</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="show-confidence" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-label">Include HLTV Stats</div>
+          <div class="toggle-description">Fetch team statistics from HLTV for better predictions</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="include-hltv" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">📊 Data Sources</h2>
+      <p class="card-description">
+        The extension uses the following data for predictions:
+      </p>
+      <ul style="margin-left: 20px; color: rgba(255, 255, 255, 0.7); line-height: 1.8;">
+        <li>Team match history from HLTV.org</li>
+        <li>Recent team performance and rankings</li>
+        <li>Head-to-head statistics</li>
+        <li>Map pool analysis</li>
+        <li>Recent roster changes</li>
+      </ul>
+    </div>
+
+    <div class="btn-group">
+      <button id="save-btn" class="btn btn-primary">💾 Save Settings</button>
+      <button id="test-btn" class="btn btn-secondary">🔍 Test API</button>
+    </div>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>
