@@ -224,9 +224,17 @@
 }
 
 .mp-prediction-badge.loading {
-  background: rgba(255, 255, 255, 0.05);
+  background: transparent;
   color: var(--mp-text-muted);
   animation: mp-pulse 1.5s infinite;
+  border: 1px dashed rgba(255,255,255,0.2);
+  min-width: auto;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.mp-prediction-badge:empty {
+  display: none !important;
 }
 
 .mp-prediction-badge.error {

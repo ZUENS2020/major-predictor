@@ -73,35 +73,33 @@ async function getPrediction(matchData) {
   
   // Collect data from search
   let hltvSearchResults = null;
-  let generalSearchResults = null;
   
-  // Head-to-head search results for last 3 months
-  let h2hSearchResults = null;
+  // Get current date and last 3 months for search
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth(); // 0-11
+  const months = [];
+  for (let i = 0; i < 3; i++) {
+    const d = new Date(currentYear, currentMonth - i, 1);
+    months.push(d.toLocaleString('en-US', { month: 'long' }));
+  }
+  const monthsStr = months.join(' ');
+  const yearsStr = currentMonth < 2 ? `${currentYear - 1} ${currentYear}` : `${currentYear}`;
   
-  // Use Tavily to search HLTV for team data
+  // Use Tavily to search HLTV for team data (single comprehensive search to avoid rate limits)
   if (settings.tavilyApiKey) {
     try {
-      // Search 1: HLTV specific search for team rankings and recent form
-      const hltvQuery = `site:hltv.org "${matchData.team1}" "${matchData.team2}" 2024 2025 match results ranking`;
+      // Combined search: HLTV data including H2H, rankings, map stats
+      const hltvQuery = `site:hltv.org "${matchData.team1}" "${matchData.team2}" ${monthsStr} ${yearsStr} match head-to-head ranking map`;
       console.log('Searching HLTV for:', hltvQuery);
       hltvSearchResults = await searchTavily(hltvQuery, settings.tavilyApiKey, ['hltv.org']);
-      
-      // Search 2: Head-to-head history (last 3 months) - PRIORITY
-      const h2hQuery = `site:hltv.org "${matchData.team1}" vs "${matchData.team2}" head-to-head results October November December 2024 2025`;
-      console.log('Searching H2H:', h2hQuery);
-      h2hSearchResults = await searchTavily(h2hQuery, settings.tavilyApiKey, ['hltv.org']);
-      
-      // Search 3: General search for recent news and form
-      const generalQuery = `CS2 "${matchData.team1}" vs "${matchData.team2}" recent match 2024 2025 form`;
-      console.log('Searching general:', generalQuery);
-      generalSearchResults = await searchTavily(generalQuery, settings.tavilyApiKey);
     } catch (e) {
       console.error('Tavily search failed:', e);
     }
   }
 
   // Build the prompt with search results
-  const prompt = buildPredictionPrompt(matchData, settings, hltvSearchResults, generalSearchResults, h2hSearchResults);
+  const prompt = buildPredictionPrompt(matchData, settings, hltvSearchResults);
 
   try {
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -117,23 +115,16 @@ async function getPrediction(matchData) {
         messages: [
           {
             role: 'system',
-            content: `You are an expert CS2 esports analyst specializing in Major tournament predictions. 
+            content: `You are a CS2 esports analyst. Today: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}.
 
-Your predictions should be based on (in order of priority):
-1. HEAD-TO-HEAD RECORD (HIGHEST PRIORITY) - Focus on matches from the LAST 3 MONTHS (September-December 2024)
-   - Include specific match results with scores
-   - Note the tournament/context of each H2H match
-   - Recent H2H is more predictive than overall H2H
-2. HLTV Rankings - Current world ranking positions
-3. Recent Form - Last 3-5 matches for each team
-4. Tournament context and stakes
+Analyze matches based on:
+1. H2H last 3 months (strongest indicator)
+2. HLTV rankings
+3. Map pool strength
+4. Recent form
 
-IMPORTANT RULES:
-- Always prioritize recent head-to-head data (last 3 months)
-- If teams met recently, this is the STRONGEST indicator
-- Include HLTV rankings: "Team A #X vs Team B #Y"
-- Cite specific H2H match results: "Team A beat Team B 2-1 at [Tournament] on [Date]"
-
+Respond with JSON only.`
+          },
 If no recent H2H exists, explicitly state "No direct matches in last 3 months" and rely on other factors.
 
 Always cite specific data when available.
@@ -144,7 +135,7 @@ Respond with valid JSON only.`
             content: prompt
           }
         ],
-        max_tokens: 1500,
+        max_tokens: 800,
         temperature: 0.3
       })
     });
@@ -212,83 +203,62 @@ function formatSearchResults(data, source = 'Search') {
 }
 
 // Build the prompt for the AI model
-function buildPredictionPrompt(matchData, settings, hltvResults, generalResults, h2hResults = null) {
-  let prompt = `Analyze this CS2 Major match and provide a prediction:
+function buildPredictionPrompt(matchData, settings, hltvResults) {
+  // Get current date dynamically
+  const now = new Date();
+  const currentDateStr = now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth();
+  
+  // Calculate last 3 months
+  const last3Months = [];
+  for (let i = 0; i < 3; i++) {
+    const d = new Date(currentYear, currentMonth - i, 1);
+    last3Months.push(d.toLocaleString('en-US', { month: 'long', year: 'numeric' }));
+  }
+  const last3MonthsStr = last3Months.join(', ');
+  
+  // Determine match format from tournament info
+  const matchFormat = matchData.matchFormat || 'BO3';
+  
+  let prompt = `Analyze this CS2 Major match:
 
 === MATCH INFO ===
 Team 1: ${matchData.team1}
 Team 2: ${matchData.team2}
 Tournament: ${matchData.tournament || 'StarLadder Budapest Major 2025'}
-Match Type: Best of 3 (Swiss Stage)
-Current Date: December 2024
+Format: ${matchFormat} (Swiss Stage)
+Date: ${currentDateStr}
 
 `;
 
-  // Add HEAD-TO-HEAD data first (HIGHEST PRIORITY)
-  prompt += `=== HEAD-TO-HEAD HISTORY (LAST 3 MONTHS - HIGHEST PRIORITY) ===\n`;
-  if (h2hResults && h2hResults.results && h2hResults.results.length > 0) {
-    if (h2hResults.answer) {
-      prompt += `Summary: ${h2hResults.answer}\n\n`;
-    }
-    prompt += `Recent H2H Matches:\n`;
-    h2hResults.results.forEach((r, i) => {
-      prompt += `${i+1}. ${r.title}\n   ${r.content?.substring(0, 500) || 'No content'}\n\n`;
-    });
-  } else {
-    prompt += `(No direct H2H search results - use your knowledge of any matches between these teams in Sept-Dec 2024)\n\n`;
-  }
-
   // Add HLTV search results
   if (hltvResults && hltvResults.results && hltvResults.results.length > 0) {
-    prompt += `=== HLTV DATA (Rankings & Form) ===\n`;
+    prompt += `=== HLTV DATA ===\n`;
     if (hltvResults.answer) {
-      prompt += `AI Summary: ${hltvResults.answer}\n\n`;
+      prompt += `Summary: ${hltvResults.answer}\n\n`;
     }
-    prompt += `Search Results:\n`;
-    hltvResults.results.forEach((r, i) => {
-      prompt += `${i+1}. ${r.title}\n   ${r.content?.substring(0, 400) || 'No content'}\n\n`;
+    hltvResults.results.slice(0, 5).forEach((r, i) => {
+      prompt += `${i+1}. ${r.title}\n   ${r.content?.substring(0, 400) || ''}\n\n`;
     });
   } else {
-    prompt += `=== HLTV DATA ===\n(No search results available - use your knowledge of current HLTV rankings)\n\n`;
+    prompt += `=== HLTV DATA ===\n(No search results - use your knowledge of HLTV rankings, H2H, map pools)\n\n`;
   }
 
-  // Add general search results (secondary)
-  if (generalResults && generalResults.results && generalResults.results.length > 0) {
-    prompt += `=== RECENT NEWS & CONTEXT ===\n`;
-    if (generalResults.answer) {
-      prompt += `Summary: ${generalResults.answer}\n\n`;
-    }
-    generalResults.results.slice(0, 3).forEach((r, i) => {
-      prompt += `${i+1}. ${r.title}\n   ${r.content?.substring(0, 300) || ''}\n\n`;
-    });
-  }
+  prompt += `=== PREDICT ===
+Consider (priority order):
+1. H2H last 3 months (${last3MonthsStr}) - STRONGEST indicator
+2. HLTV rankings & evaluations
+3. Map pool (${matchFormat}: ${matchFormat === 'BO1' ? 'map pick crucial' : 'deep pool wins'})
+4. Recent form
 
-  prompt += `=== PREDICTION INSTRUCTIONS ===
-Based on the data above, predict the match outcome.
-
-⚠️ CRITICAL: HEAD-TO-HEAD IN LAST 3 MONTHS IS THE MOST IMPORTANT FACTOR!
-If these teams have played each other in September-December 2024:
-- This is the STRONGEST predictor of the outcome
-- Include all H2H match results with scores and dates
-- Explain the pattern (is one team dominant? Are games close?)
-
-Also consider:
-- Current HLTV rankings (MUST include in keyFactors)
-- Recent form (last 3-5 matches for each team)
-- Map pool compatibility
-- Tournament stakes (Major Swiss stage)
-
-Respond with ONLY valid JSON in this format:
+JSON response only:
 {
-  "predictedWinner": "Team Name (must match exactly team1 or team2)",
+  "predictedWinner": "exact team name",
   "confidence": 65,
-  "keyFactors": [
-    "H2H Last 3 Months: Team1 X-Y Team2 (include specific match results with dates if available)",
-    "HLTV Ranking: Team1 #X vs Team2 #Y",
-    "Recent Form: Team1 W-L last 5 vs Team2 W-L last 5"
-  ],
+  "keyFactors": ["H2H: ...", "Ranking: #X vs #Y", "Maps: ..."],
   "riskLevel": "low|medium|high",
-  "briefAnalysis": "2-3 sentence analysis focusing on recent H2H results and why they predict this outcome"
+  "briefAnalysis": "2-3 sentences"
 }`;
 
   return prompt;

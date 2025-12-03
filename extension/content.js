@@ -201,12 +201,28 @@
         this.ui.updateStatus('busy', `Predicting ${targetRoundName}...`);
 
         // Mark all as loading first
-        currentRoundMatches.forEach(m => this.addBadge(m.element, { status: 'loading', text: '...' }, m.id));
+        currentRoundMatches.forEach(m => this.addBadge(m.element, { status: 'loading', text: '⏳' }, m.id));
 
-        // Execute concurrently for this round
-        const results = await Promise.allSettled(currentRoundMatches.map(m => this.analyzeMatch(m)));
+        // Execute sequentially to avoid API rate limits (2 at a time max)
+        let successCount = 0;
+        const batchSize = 2;
+        
+        for (let i = 0; i < currentRoundMatches.length; i += batchSize) {
+          const batch = currentRoundMatches.slice(i, i + batchSize);
+          this.ui.updateStatus('busy', `${targetRoundName}: ${i+1}-${Math.min(i+batchSize, currentRoundMatches.length)}/${currentRoundMatches.length}`);
+          
+          const results = await Promise.allSettled(
+            batch.map(m => this.analyzeMatchWithTimeout(m, 60000)) // 60 second timeout per match
+          );
+          
+          successCount += results.filter(r => r.status === 'fulfilled' && r.value).length;
+          
+          // Small delay between batches to avoid rate limiting
+          if (i + batchSize < currentRoundMatches.length) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+        }
 
-        const successCount = results.filter(r => r.status === 'fulfilled' && r.value).length;
         logger.success(`${targetRoundName} complete. ${successCount}/${currentRoundMatches.length} predicted.`);
         
         // Check if there are more rounds pending
@@ -230,6 +246,20 @@
       }
     }
 
+    // Wrapper with timeout for analyzeMatch
+    async analyzeMatchWithTimeout(match, timeoutMs) {
+      return Promise.race([
+        this.analyzeMatch(match),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Request timeout')), timeoutMs)
+        )
+      ]).catch(error => {
+        logger.error(`❌ Timeout: ${match.team1} vs ${match.team2}`);
+        this.addBadge(match.element, { status: 'error', text: '⏱️', error: 'Timeout' }, match.id);
+        return false;
+      });
+    }
+
     findMatches() {
       const matches = [];
       
@@ -239,6 +269,12 @@
       logger.info(`Found ${matchElements.length} potential match elements`);
       
       matchElements.forEach((el, idx) => {
+        // Skip matches that are already completed (3-0 or 0-3 results)
+        if (this.isMatchCompleted(el)) {
+          logger.info(`Match ${idx}: Skipped (already completed/qualified/eliminated)`);
+          return;
+        }
+        
         const teams = this.extractTeams(el);
         if (teams) {
           const id = `${teams.team1}-vs-${teams.team2}`.toLowerCase().replace(/[^a-z0-9]/g, '-');
@@ -271,6 +307,52 @@
       logger.info(`Total unique matches found: ${uniqueMatches.length}`);
 
       return uniqueMatches;
+    }
+
+    // Check if a match is already completed (team already qualified 3-0 or eliminated 0-3)
+    isMatchCompleted(element) {
+      // Look for score indicators like "3-0", "0-3", "3-1", "3-2", etc.
+      const text = element.textContent || '';
+      
+      // Check for final scores (3-X or X-3 means match is decided)
+      const scorePattern = /\b(3-[0-2]|[0-2]-3)\b/;
+      if (scorePattern.test(text)) {
+        return true;
+      }
+      
+      // Check for "qualified", "eliminated", "advanced" text
+      const lowerText = text.toLowerCase();
+      if (lowerText.includes('qualified') || lowerText.includes('eliminated') || 
+          lowerText.includes('advanced') || lowerText.includes('out')) {
+        return true;
+      }
+      
+      // Check parent containers for 3-0 or 0-3 headers (Swiss format)
+      let parent = element.parentElement;
+      let depth = 0;
+      while (parent && depth < 5) {
+        const parentText = parent.textContent || '';
+        // Look for round headers like "3-0" which indicate qualification round
+        const headerMatch = parentText.match(/^(3-0|0-3)\s*$/m);
+        if (headerMatch) {
+          // This is a 3-0 or 0-3 bracket - teams here are already decided
+          return true;
+        }
+        
+        // Check for nearby sibling headers
+        const prevSibling = parent.previousElementSibling;
+        if (prevSibling) {
+          const sibText = prevSibling.textContent?.trim() || '';
+          if (sibText === '3-0' || sibText === '0-3') {
+            return true;
+          }
+        }
+        
+        parent = parent.parentElement;
+        depth++;
+      }
+      
+      return false;
     }
 
     getRoundInfo(element) {
@@ -508,6 +590,11 @@
       const existing = element.querySelector(`#mp-badge-${id}`);
       if (existing) existing.remove();
 
+      // Don't show badge if no text
+      if (!data.text || data.text.trim() === '') {
+        return;
+      }
+
       const badge = document.createElement('div');
       badge.id = `mp-badge-${id}`;
       badge.className = `mp-prediction-badge ${data.status}`;
@@ -569,6 +656,10 @@
 
   function init() {
     console.log('[Major Predictor] Initializing v2...');
+    
+    // Clean up any old badges from previous sessions
+    document.querySelectorAll('[id^="mp-badge-"], .mp-prediction-badge').forEach(el => el.remove());
+    
     ui.init();
     
     // Bind predict button
