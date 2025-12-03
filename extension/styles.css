@@ -1,0 +1,94 @@
+/* Additional styles for Major Predictor extension */
+
+/* Animation for loading state */
+@keyframes mp-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.mp-prediction-badge.loading {
+  background: linear-gradient(
+    90deg,
+    #64748b 0%,
+    #94a3b8 50%,
+    #64748b 100%
+  );
+  background-size: 200% 100%;
+  animation: mp-shimmer 1.5s ease-in-out infinite;
+}
+
+/* Ensure tooltips are visible above other content */
+.mp-prediction-badge {
+  position: relative;
+  z-index: 1000;
+}
+
+.mp-tooltip {
+  z-index: 10001;
+}
+
+/* Mobile responsive adjustments */
+@media (max-width: 768px) {
+  .mp-prediction-badge {
+    font-size: 10px;
+    padding: 3px 8px;
+  }
+
+  .mp-tooltip {
+    min-width: 220px;
+    max-width: 280px;
+    font-size: 11px;
+    left: auto;
+    right: 0;
+    transform: none;
+  }
+
+  .mp-tooltip::after {
+    left: auto;
+    right: 20px;
+  }
+
+  #mp-predictions-container {
+    top: 60px;
+    right: 10px;
+    max-width: calc(100vw - 20px);
+  }
+}
+
+/* Dark mode adjustments */
+@media (prefers-color-scheme: dark) {
+  .mp-tooltip {
+    background: #0f172a;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .mp-tooltip::after {
+    border-top-color: #0f172a;
+  }
+}
+
+/* Accessibility - reduce motion */
+@media (prefers-reduced-motion: reduce) {
+  .mp-prediction-badge {
+    transition: none;
+  }
+
+  .mp-prediction-badge.loading {
+    animation: none;
+  }
+
+  .mp-tooltip {
+    transition: none;
+  }
+}
+
+/* High contrast mode */
+@media (forced-colors: active) {
+  .mp-prediction-badge {
+    border: 2px solid currentColor;
+  }
+}
