@@ -484,14 +484,27 @@
       
       const confidence = prediction.confidence ? `<span style="font-size:0.8em; opacity:0.8; margin-left:4px">${prediction.confidence}%</span>` : '';
       
+      // Build key factors list
+      let factorsHtml = '';
+      if (prediction.keyFactors && prediction.keyFactors.length > 0) {
+        factorsHtml = `<div style="margin-top:6px; font-size:0.85em;">
+          <div style="color:#4ade80; margin-bottom:4px;">Key Factors:</div>
+          <ul style="margin:0; padding-left:16px; color:#ddd;">
+            ${prediction.keyFactors.slice(0, 3).map(f => `<li>${f}</li>`).join('')}
+          </ul>
+        </div>`;
+      }
+      
       badge.innerHTML = `
         <span>${prediction.predictedWinner}</span>
         ${confidence}
         <div class="mp-tooltip">
-          <div class="mp-tooltip-header">Analysis</div>
-          <div>${prediction.briefAnalysis || 'No analysis available'}</div>
-          <div style="margin-top:8px; font-size:0.9em; color:#aaa">
-            Risk: ${prediction.riskLevel || 'Unknown'}
+          <div class="mp-tooltip-header">🎯 AI Analysis (HLTV-Based)</div>
+          <div style="margin-top:6px">${prediction.briefAnalysis || 'No analysis available'}</div>
+          ${factorsHtml}
+          <div style="margin-top:8px; font-size:0.9em; display:flex; gap:12px; color:#aaa">
+            <span>Risk: <span style="color:${prediction.riskLevel === 'low' ? '#4ade80' : prediction.riskLevel === 'high' ? '#f87171' : '#fbbf24'}">${prediction.riskLevel || 'Unknown'}</span></span>
+            ${prediction.predictedScore ? `<span>Score: ${prediction.predictedScore}</span>` : ''}
           </div>
         </div>
       `;
