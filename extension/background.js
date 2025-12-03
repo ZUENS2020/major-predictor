@@ -69,7 +69,7 @@ async function getPrediction(matchData) {
     throw new Error('OpenRouter API key not configured. Please set it in the extension settings.');
   }
 
-  const model = settings.aiModel || 'anthropic/claude-3.5-sonnet';
+  const model = settings.aiModel || 'openai/gpt-4o-mini'; // Fast model by default
   
   // Collect data from search
   let hltvSearchResults = null;
@@ -86,13 +86,20 @@ async function getPrediction(matchData) {
   const monthsStr = months.join(' ');
   const yearsStr = currentMonth < 2 ? `${currentYear - 1} ${currentYear}` : `${currentYear}`;
   
-  // Use Tavily to search HLTV for team data (single comprehensive search to avoid rate limits)
-  if (settings.tavilyApiKey) {
+  // Use Tavily to search HLTV for team data (with 10 second timeout)
+  if (settings.tavilyApiKey && settings.includeHltv !== false) {
     try {
-      // Combined search: HLTV data including H2H, rankings, map stats
-      const hltvQuery = `site:hltv.org "${matchData.team1}" "${matchData.team2}" ${monthsStr} ${yearsStr} match head-to-head ranking map`;
+      const hltvQuery = `site:hltv.org "${matchData.team1}" "${matchData.team2}" ${monthsStr} ${yearsStr} match ranking`;
       console.log('Searching HLTV for:', hltvQuery);
-      hltvSearchResults = await searchTavily(hltvQuery, settings.tavilyApiKey, ['hltv.org']);
+      
+      // 10 second timeout for search
+      hltvSearchResults = await Promise.race([
+        searchTavily(hltvQuery, settings.tavilyApiKey, ['hltv.org']),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Search timeout')), 10000))
+      ]).catch(e => {
+        console.log('Search skipped:', e.message);
+        return null;
+      });
     } catch (e) {
       console.error('Tavily search failed:', e);
     }
@@ -115,20 +122,7 @@ async function getPrediction(matchData) {
         messages: [
           {
             role: 'system',
-            content: `You are a CS2 esports analyst. Today: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}.
-
-Analyze matches based on:
-1. H2H last 3 months (strongest indicator)
-2. HLTV rankings
-3. Map pool strength
-4. Recent form
-
-Respond with JSON only.`
-          },
-If no recent H2H exists, explicitly state "No direct matches in last 3 months" and rely on other factors.
-
-Always cite specific data when available.
-Respond with valid JSON only.`
+            content: `You are a CS2 esports analyst. Today: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}. Analyze matches based on H2H last 3 months, HLTV rankings, map pools, recent form. Respond with JSON only.`
           },
           {
             role: 'user',
