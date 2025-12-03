@@ -197,6 +197,7 @@
         const currentRoundMatches = pendingMatches.filter(m => m.roundIndex === targetRoundIndex);
 
         logger.info(`Targeting ${targetRoundName} (${currentRoundMatches.length} matches)...`);
+        logger.info(`📊 Using HLTV API for team rankings & match history`);
         this.ui.updateStatus('busy', `Predicting ${targetRoundName}...`);
 
         // Mark all as loading first
@@ -416,6 +417,7 @@
     async analyzeMatch(match) {
       try {
         logger.info(`Analyzing: ${match.team1} vs ${match.team2}`);
+        logger.info(`⏳ Fetching HLTV data & generating prediction...`);
         
         const response = await chrome.runtime.sendMessage({
           action: 'getPrediction',
@@ -429,13 +431,23 @@
         if (response.success) {
           this.predictions.set(match.id, response.prediction);
           this.updateBadge(match.element, response.prediction, match.id);
-          logger.success(`Predicted: ${match.team1} vs ${match.team2} -> ${response.prediction.predictedWinner}`);
+          
+          // Enhanced logging with HLTV data info
+          const pred = response.prediction;
+          logger.success(`✅ ${match.team1} vs ${match.team2}`);
+          logger.info(`   → Winner: ${pred.predictedWinner} (${pred.confidence}% confidence)`);
+          if (pred.predictedScore) {
+            logger.info(`   → Score: ${pred.predictedScore}`);
+          }
+          if (pred.keyFactors && pred.keyFactors.length > 0) {
+            logger.info(`   → Factors: ${pred.keyFactors.slice(0, 2).join(', ')}`);
+          }
           return true;
         } else {
           throw new Error(response.error);
         }
       } catch (error) {
-        logger.error(`Failed ${match.team1} vs ${match.team2}: ${error.message}`);
+        logger.error(`❌ Failed ${match.team1} vs ${match.team2}: ${error.message}`);
         this.addBadge(match.element, { status: 'error', text: 'Err', error: error.message }, match.id);
         return false;
       }

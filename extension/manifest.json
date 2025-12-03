@@ -11,7 +11,8 @@
     "https://majors.im/*",
     "https://www.hltv.org/*",
     "https://openrouter.ai/*",
-    "https://api.tavily.com/*"
+    "https://api.tavily.com/*",
+    "https://hltv-api.vercel.app/*"
   ],
   "action": {
     "default_popup": "popup.html",

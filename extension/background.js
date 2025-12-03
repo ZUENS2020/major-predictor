@@ -71,11 +71,25 @@ async function getPrediction(matchData) {
 
   const model = settings.aiModel || 'anthropic/claude-3.5-sonnet';
   
-  // Fetch external data if enabled
+  // Collect data from multiple sources with weighting
+  let hltvData = null;
   let searchContext = '';
+  
+  // Priority 1: HLTV API (highest weight) - only if enabled
+  if (settings.includeHltv !== false) {
+    try {
+      console.log('Fetching HLTV API data for:', matchData.team1, 'vs', matchData.team2);
+      hltvData = await fetchHLTVApiData(matchData.team1, matchData.team2);
+      console.log('HLTV API data:', hltvData);
+    } catch (e) {
+      console.error('HLTV API failed:', e);
+    }
+  }
+
+  // Priority 2: Tavily search for additional context
   if (settings.tavilyApiKey) {
     try {
-      const query = `CS2 match prediction ${matchData.team1} vs ${matchData.team2} ${matchData.tournament || ''} recent results stats`;
+      const query = `site:hltv.org ${matchData.team1} vs ${matchData.team2} match history head to head 2024 2025`;
       const searchResults = await searchTavily(query, settings.tavilyApiKey);
       if (searchResults) {
         searchContext = formatSearchResults(searchResults);
@@ -85,8 +99,8 @@ async function getPrediction(matchData) {
     }
   }
 
-  // Build the prompt for prediction
-  const prompt = buildPredictionPrompt(matchData, settings, searchContext);
+  // Build the prompt with weighted data
+  const prompt = buildPredictionPrompt(matchData, settings, hltvData, searchContext);
 
   try {
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -102,9 +116,12 @@ async function getPrediction(matchData) {
         messages: [
           {
             role: 'system',
-            content: `You are an expert CS2 esports analyst. Analyze matches based on recent form, map pool, and head-to-head stats.
-If search results are provided, prioritize that recent information.
-Always respond with valid JSON.`
+            content: `You are an expert CS2 esports analyst. Your predictions are based on data with the following priority weights:
+1. HLTV official data (highest priority - 60% weight): Team rankings, recent match results, head-to-head records
+2. Recent search results (medium priority - 30% weight): News, roster changes, recent form
+3. Your knowledge (lowest priority - 10% weight): Historical context
+
+Always base your prediction primarily on the HLTV data provided. Respond with valid JSON only.`
           },
           {
             role: 'user',
@@ -112,7 +129,7 @@ Always respond with valid JSON.`
           }
         ],
         max_tokens: 1500,
-        temperature: 0.5
+        temperature: 0.3
       })
     });
 
@@ -136,6 +153,88 @@ Always respond with valid JSON.`
   }
 }
 
+// Fetch data from HLTV API
+async function fetchHLTVApiData(team1, team2) {
+  const baseUrl = 'https://hltv-api.vercel.app/api';
+  
+  try {
+    // Fetch top teams ranking
+    const teamsRes = await fetch(`${baseUrl}/teams`);
+    const teamsData = teamsRes.ok ? await teamsRes.json() : [];
+    
+    // Fetch recent results
+    const resultsRes = await fetch(`${baseUrl}/results`);
+    const resultsData = resultsRes.ok ? await resultsRes.json() : [];
+    
+    // Find team rankings
+    const team1Rank = teamsData.find(t => 
+      t.name?.toLowerCase().includes(team1.toLowerCase()) ||
+      team1.toLowerCase().includes(t.name?.toLowerCase())
+    );
+    const team2Rank = teamsData.find(t => 
+      t.name?.toLowerCase().includes(team2.toLowerCase()) ||
+      team2.toLowerCase().includes(t.name?.toLowerCase())
+    );
+    
+    // Find recent matches involving these teams
+    const team1Matches = resultsData.filter(m => 
+      m.team1?.name?.toLowerCase().includes(team1.toLowerCase()) ||
+      m.team2?.name?.toLowerCase().includes(team1.toLowerCase()) ||
+      team1.toLowerCase().includes(m.team1?.name?.toLowerCase() || '') ||
+      team1.toLowerCase().includes(m.team2?.name?.toLowerCase() || '')
+    ).slice(0, 5);
+    
+    const team2Matches = resultsData.filter(m => 
+      m.team1?.name?.toLowerCase().includes(team2.toLowerCase()) ||
+      m.team2?.name?.toLowerCase().includes(team2.toLowerCase()) ||
+      team2.toLowerCase().includes(m.team1?.name?.toLowerCase() || '') ||
+      team2.toLowerCase().includes(m.team2?.name?.toLowerCase() || '')
+    ).slice(0, 5);
+    
+    // Find head-to-head matches
+    const h2hMatches = resultsData.filter(m => {
+      const teams = [m.team1?.name?.toLowerCase(), m.team2?.name?.toLowerCase()];
+      const hasTeam1 = teams.some(t => t?.includes(team1.toLowerCase()) || team1.toLowerCase().includes(t || ''));
+      const hasTeam2 = teams.some(t => t?.includes(team2.toLowerCase()) || team2.toLowerCase().includes(t || ''));
+      return hasTeam1 && hasTeam2;
+    }).slice(0, 5);
+    
+    return {
+      team1: {
+        name: team1,
+        ranking: team1Rank?.ranking || 'Unranked',
+        points: team1Rank?.points || 0,
+        recentMatches: team1Matches.map(m => ({
+          opponent: m.team1?.name === team1 ? m.team2?.name : m.team1?.name,
+          result: m.matchResult,
+          event: m.event?.name
+        }))
+      },
+      team2: {
+        name: team2,
+        ranking: team2Rank?.ranking || 'Unranked',
+        points: team2Rank?.points || 0,
+        recentMatches: team2Matches.map(m => ({
+          opponent: m.team1?.name === team2 ? m.team2?.name : m.team1?.name,
+          result: m.matchResult,
+          event: m.event?.name
+        }))
+      },
+      headToHead: h2hMatches.map(m => ({
+        team1: m.team1?.name,
+        team2: m.team2?.name,
+        result: m.matchResult,
+        event: m.event?.name
+      })),
+      dataSource: 'HLTV API',
+      fetchedAt: new Date().toISOString()
+    };
+  } catch (error) {
+    console.error('Error fetching HLTV API:', error);
+    return null;
+  }
+}
+
 async function searchTavily(query, apiKey) {
   const response = await fetch('https://api.tavily.com/search', {
     method: 'POST',
@@ -145,9 +244,10 @@ async function searchTavily(query, apiKey) {
     body: JSON.stringify({
       api_key: apiKey,
       query: query,
-      search_depth: "basic",
+      search_depth: "advanced",
+      include_domains: ["hltv.org"],
       include_answer: true,
-      max_results: 3
+      max_results: 5
     })
   });
   
@@ -157,36 +257,74 @@ async function searchTavily(query, apiKey) {
 
 function formatSearchResults(data) {
   if (!data || !data.results) return '';
-  return "Recent Information from Search:\n" + 
-    data.results.map(r => `- ${r.title}: ${r.content}`).join('\n');
+  let text = "=== Additional Search Results (from HLTV) ===\n";
+  if (data.answer) {
+    text += `Summary: ${data.answer}\n\n`;
+  }
+  text += data.results.map(r => `• ${r.title}: ${r.content?.substring(0, 200)}`).join('\n');
+  return text;
 }
 
 // Build the prompt for the AI model
-function buildPredictionPrompt(matchData, settings, searchContext) {
+function buildPredictionPrompt(matchData, settings, hltvData, searchContext) {
   let prompt = `Analyze this CS2 match and provide a prediction:
 
-**Match Details:**
-- Team 1: ${matchData.team1}
-- Team 2: ${matchData.team2}
-- Tournament: ${matchData.tournament || 'Major Championship'}
-- Match Type: ${matchData.matchType || 'Best of 3'}
+=== MATCH INFO ===
+Team 1: ${matchData.team1}
+Team 2: ${matchData.team2}
+Tournament: ${matchData.tournament || 'Major Championship'}
+Match Type: ${matchData.matchType || 'Best of 3'}
 
-**Analysis Request:**
-Predict the winner based on team form and map pool.
+`;
 
-${searchContext ? `\n**Search Context:**\n${searchContext}\n` : ''}
+  // Add HLTV data (highest weight)
+  if (hltvData) {
+    prompt += `=== HLTV DATA (PRIMARY SOURCE - 60% weight) ===
+${matchData.team1}:
+  - World Ranking: #${hltvData.team1.ranking}
+  - Ranking Points: ${hltvData.team1.points}
+  - Recent Matches: ${hltvData.team1.recentMatches.length > 0 
+    ? hltvData.team1.recentMatches.map(m => `vs ${m.opponent}: ${m.result}`).join(', ')
+    : 'No recent data'}
 
-Please provide your response in the following JSON format:
+${matchData.team2}:
+  - World Ranking: #${hltvData.team2.ranking}
+  - Ranking Points: ${hltvData.team2.points}
+  - Recent Matches: ${hltvData.team2.recentMatches.length > 0 
+    ? hltvData.team2.recentMatches.map(m => `vs ${m.opponent}: ${m.result}`).join(', ')
+    : 'No recent data'}
+
+Head-to-Head History:
+${hltvData.headToHead.length > 0 
+  ? hltvData.headToHead.map(m => `${m.team1} vs ${m.team2}: ${m.result} (${m.event})`).join('\n')
+  : 'No recent head-to-head data'}
+
+`;
+  } else {
+    prompt += `=== HLTV DATA ===
+(Unable to fetch - use your knowledge as fallback)
+
+`;
+  }
+
+  // Add search context (medium weight)
+  if (searchContext) {
+    prompt += `
+${searchContext}
+
+`;
+  }
+
+  prompt += `=== INSTRUCTIONS ===
+Based on the weighted data above (HLTV data is most important), predict the match outcome.
+Respond with ONLY valid JSON in this format:
 {
   "predictedWinner": "Team Name",
   "confidence": 75,
   "predictedScore": "2-1",
-  "keyFactors": [
-    "Factor 1",
-    "Factor 2"
-  ],
+  "keyFactors": ["Factor based on HLTV ranking", "Factor based on recent form", "Factor based on H2H"],
   "riskLevel": "low|medium|high",
-  "briefAnalysis": "Short summary"
+  "briefAnalysis": "2-3 sentence analysis citing HLTV data"
 }`;
 
   return prompt;
