@@ -75,6 +75,9 @@ async function getPrediction(matchData) {
   let hltvSearchResults = null;
   let generalSearchResults = null;
   
+  // Head-to-head search results for last 3 months
+  let h2hSearchResults = null;
+  
   // Use Tavily to search HLTV for team data
   if (settings.tavilyApiKey) {
     try {
@@ -83,7 +86,12 @@ async function getPrediction(matchData) {
       console.log('Searching HLTV for:', hltvQuery);
       hltvSearchResults = await searchTavily(hltvQuery, settings.tavilyApiKey, ['hltv.org']);
       
-      // Search 2: General search for recent news and form
+      // Search 2: Head-to-head history (last 3 months) - PRIORITY
+      const h2hQuery = `site:hltv.org "${matchData.team1}" vs "${matchData.team2}" head-to-head results October November December 2024 2025`;
+      console.log('Searching H2H:', h2hQuery);
+      h2hSearchResults = await searchTavily(h2hQuery, settings.tavilyApiKey, ['hltv.org']);
+      
+      // Search 3: General search for recent news and form
       const generalQuery = `CS2 "${matchData.team1}" vs "${matchData.team2}" recent match 2024 2025 form`;
       console.log('Searching general:', generalQuery);
       generalSearchResults = await searchTavily(generalQuery, settings.tavilyApiKey);
@@ -93,7 +101,7 @@ async function getPrediction(matchData) {
   }
 
   // Build the prompt with search results
-  const prompt = buildPredictionPrompt(matchData, settings, hltvSearchResults, generalSearchResults);
+  const prompt = buildPredictionPrompt(matchData, settings, hltvSearchResults, generalSearchResults, h2hSearchResults);
 
   try {
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -111,17 +119,24 @@ async function getPrediction(matchData) {
             role: 'system',
             content: `You are an expert CS2 esports analyst specializing in Major tournament predictions. 
 
-Your predictions should be based on:
-1. HLTV search results (highest priority - official rankings, head-to-head records, recent results)
-2. Recent news and match results from search
-3. Your knowledge of team rosters, playstyles, and historical performance
+Your predictions should be based on (in order of priority):
+1. HEAD-TO-HEAD RECORD (HIGHEST PRIORITY) - Focus on matches from the LAST 3 MONTHS (September-December 2024)
+   - Include specific match results with scores
+   - Note the tournament/context of each H2H match
+   - Recent H2H is more predictive than overall H2H
+2. HLTV Rankings - Current world ranking positions
+3. Recent Form - Last 3-5 matches for each team
+4. Tournament context and stakes
 
-IMPORTANT: Always include current HLTV world rankings for both teams in your analysis.
-For example: "Natus Vincere #1" vs "FURIA #8"
+IMPORTANT RULES:
+- Always prioritize recent head-to-head data (last 3 months)
+- If teams met recently, this is the STRONGEST indicator
+- Include HLTV rankings: "Team A #X vs Team B #Y"
+- Cite specific H2H match results: "Team A beat Team B 2-1 at [Tournament] on [Date]"
 
-If search results don't provide rankings, use your knowledge of current rankings (as of late 2024/early 2025).
+If no recent H2H exists, explicitly state "No direct matches in last 3 months" and rely on other factors.
 
-Always cite specific data when available (rankings, recent results, H2H records).
+Always cite specific data when available.
 Respond with valid JSON only.`
           },
           {
@@ -197,7 +212,7 @@ function formatSearchResults(data, source = 'Search') {
 }
 
 // Build the prompt for the AI model
-function buildPredictionPrompt(matchData, settings, hltvResults, generalResults) {
+function buildPredictionPrompt(matchData, settings, hltvResults, generalResults, h2hResults = null) {
   let prompt = `Analyze this CS2 Major match and provide a prediction:
 
 === MATCH INFO ===
@@ -205,12 +220,27 @@ Team 1: ${matchData.team1}
 Team 2: ${matchData.team2}
 Tournament: ${matchData.tournament || 'StarLadder Budapest Major 2025'}
 Match Type: Best of 3 (Swiss Stage)
+Current Date: December 2024
 
 `;
 
-  // Add HLTV search results (highest priority)
+  // Add HEAD-TO-HEAD data first (HIGHEST PRIORITY)
+  prompt += `=== HEAD-TO-HEAD HISTORY (LAST 3 MONTHS - HIGHEST PRIORITY) ===\n`;
+  if (h2hResults && h2hResults.results && h2hResults.results.length > 0) {
+    if (h2hResults.answer) {
+      prompt += `Summary: ${h2hResults.answer}\n\n`;
+    }
+    prompt += `Recent H2H Matches:\n`;
+    h2hResults.results.forEach((r, i) => {
+      prompt += `${i+1}. ${r.title}\n   ${r.content?.substring(0, 500) || 'No content'}\n\n`;
+    });
+  } else {
+    prompt += `(No direct H2H search results - use your knowledge of any matches between these teams in Sept-Dec 2024)\n\n`;
+  }
+
+  // Add HLTV search results
   if (hltvResults && hltvResults.results && hltvResults.results.length > 0) {
-    prompt += `=== HLTV DATA (Primary Source) ===\n`;
+    prompt += `=== HLTV DATA (Rankings & Form) ===\n`;
     if (hltvResults.answer) {
       prompt += `AI Summary: ${hltvResults.answer}\n\n`;
     }
@@ -219,10 +249,7 @@ Match Type: Best of 3 (Swiss Stage)
       prompt += `${i+1}. ${r.title}\n   ${r.content?.substring(0, 400) || 'No content'}\n\n`;
     });
   } else {
-    prompt += `=== HLTV DATA ===
-(No search results available - use your knowledge of current HLTV rankings and recent results)
-
-`;
+    prompt += `=== HLTV DATA ===\n(No search results available - use your knowledge of current HLTV rankings)\n\n`;
   }
 
   // Add general search results (secondary)
@@ -237,25 +264,31 @@ Match Type: Best of 3 (Swiss Stage)
   }
 
   prompt += `=== PREDICTION INSTRUCTIONS ===
-Based on the data above, predict the match outcome. Consider:
-- Current HLTV rankings of both teams (MUST include in keyFactors)
-- Recent form (last 3-5 matches)
-- Head-to-head history
-- Tournament stakes (Major Swiss stage)
+Based on the data above, predict the match outcome.
+
+⚠️ CRITICAL: HEAD-TO-HEAD IN LAST 3 MONTHS IS THE MOST IMPORTANT FACTOR!
+If these teams have played each other in September-December 2024:
+- This is the STRONGEST predictor of the outcome
+- Include all H2H match results with scores and dates
+- Explain the pattern (is one team dominant? Are games close?)
+
+Also consider:
+- Current HLTV rankings (MUST include in keyFactors)
+- Recent form (last 3-5 matches for each team)
 - Map pool compatibility
+- Tournament stakes (Major Swiss stage)
 
 Respond with ONLY valid JSON in this format:
 {
   "predictedWinner": "Team Name (must match exactly team1 or team2)",
   "confidence": 65,
-  "predictedScore": "2-1",
   "keyFactors": [
+    "H2H Last 3 Months: Team1 X-Y Team2 (include specific match results with dates if available)",
     "HLTV Ranking: Team1 #X vs Team2 #Y",
-    "Recent form: Team1 W-L record vs Team2 W-L record",
-    "Head-to-head: X-Y in recent matches"
+    "Recent Form: Team1 W-L last 5 vs Team2 W-L last 5"
   ],
   "riskLevel": "low|medium|high",
-  "briefAnalysis": "2-3 sentence analysis with specific ranking numbers and recent results"
+  "briefAnalysis": "2-3 sentence analysis focusing on recent H2H results and why they predict this outcome"
 }`;
 
   return prompt;

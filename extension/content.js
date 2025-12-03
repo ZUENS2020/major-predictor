@@ -435,9 +435,6 @@
           const pred = response.prediction;
           logger.success(`✅ ${match.team1} vs ${match.team2}`);
           logger.info(`   → Winner: ${pred.predictedWinner} (${pred.confidence}% confidence)`);
-          if (pred.predictedScore) {
-            logger.info(`   → Predicted Score: ${pred.predictedScore}`);
-          }
           // Show all key factors including rankings
           if (pred.keyFactors && pred.keyFactors.length > 0) {
             pred.keyFactors.forEach((factor, i) => {
@@ -448,6 +445,21 @@
           if (pred.briefAnalysis) {
             logger.info(`   → Analysis: ${pred.briefAnalysis.substring(0, 150)}...`);
           }
+          
+          // Save to storage for settings page
+          await this.savePredictionLog({
+            id: match.id,
+            team1: match.team1,
+            team2: match.team2,
+            round: match.round,
+            predictedWinner: pred.predictedWinner,
+            confidence: pred.confidence,
+            keyFactors: pred.keyFactors,
+            briefAnalysis: pred.briefAnalysis,
+            riskLevel: pred.riskLevel,
+            timestamp: new Date().toISOString()
+          });
+          
           return true;
         } else {
           throw new Error(response.error);
@@ -455,7 +467,40 @@
       } catch (error) {
         logger.error(`❌ Failed ${match.team1} vs ${match.team2}: ${error.message}`);
         this.addBadge(match.element, { status: 'error', text: 'Err', error: error.message }, match.id);
+        
+        // Save error to storage as well
+        await this.savePredictionLog({
+          id: match.id,
+          team1: match.team1,
+          team2: match.team2,
+          round: match.round,
+          error: error.message,
+          timestamp: new Date().toISOString()
+        });
+        
         return false;
+      }
+    }
+
+    async savePredictionLog(logEntry) {
+      try {
+        const data = await chrome.storage.local.get(['predictionLogs']);
+        const logs = data.predictionLogs || [];
+        
+        // Check if this match already exists (avoid duplicates)
+        const existingIndex = logs.findIndex(l => l.id === logEntry.id);
+        if (existingIndex >= 0) {
+          logs[existingIndex] = logEntry; // Update existing
+        } else {
+          logs.push(logEntry); // Add new
+        }
+        
+        // Keep only last 100 logs
+        const trimmedLogs = logs.slice(-100);
+        
+        await chrome.storage.local.set({ predictionLogs: trimmedLogs });
+      } catch (error) {
+        console.error('Error saving prediction log:', error);
       }
     }
 
@@ -510,7 +555,6 @@
           ${factorsHtml}
           <div style="margin-top:8px; font-size:0.9em; display:flex; gap:12px; color:#aaa">
             <span>Risk: <span style="color:${prediction.riskLevel === 'low' ? '#4ade80' : prediction.riskLevel === 'high' ? '#f87171' : '#fbbf24'}">${prediction.riskLevel || 'Unknown'}</span></span>
-            ${prediction.predictedScore ? `<span>Score: ${prediction.predictedScore}</span>` : ''}
           </div>
         </div>
       `;

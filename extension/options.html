@@ -280,6 +280,190 @@
     .toggle input:checked + .toggle-slider:before {
       transform: translateX(20px);
     }
+
+    /* 日志区域样式 */
+    .logs-container {
+      max-height: 600px;
+      overflow-y: auto;
+    }
+
+    .log-block {
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+      border-left: 4px solid #e94560;
+    }
+
+    .log-block.success {
+      border-left-color: #4ade80;
+    }
+
+    .log-block.error {
+      border-left-color: #f87171;
+    }
+
+    .log-block-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .log-block-title {
+      font-size: 16px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .log-block-time {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.5);
+    }
+
+    .log-block-result {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .log-winner {
+      font-size: 18px;
+      font-weight: 600;
+      color: #4ade80;
+    }
+
+    .log-confidence {
+      background: rgba(74, 222, 128, 0.2);
+      color: #4ade80;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .log-factors {
+      margin-top: 12px;
+    }
+
+    .log-factors-title {
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.6);
+      margin-bottom: 8px;
+    }
+
+    .log-factor {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.8);
+      margin-bottom: 6px;
+      line-height: 1.4;
+    }
+
+    .log-factor-icon {
+      color: #e94560;
+      flex-shrink: 0;
+    }
+
+    .log-analysis {
+      margin-top: 12px;
+      padding: 12px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 8px;
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.7);
+      line-height: 1.5;
+    }
+
+    .log-empty {
+      text-align: center;
+      color: rgba(255, 255, 255, 0.5);
+      padding: 40px;
+    }
+
+    .log-header-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn-icon {
+      padding: 8px 12px;
+      border: none;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.1);
+      color: white;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s;
+    }
+
+    .btn-icon:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .btn-danger:hover {
+      background: rgba(248, 113, 113, 0.3);
+      color: #f87171;
+    }
+
+    .log-stats {
+      display: flex;
+      gap: 20px;
+      margin-bottom: 16px;
+      padding: 12px 16px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 8px;
+    }
+
+    .log-stat {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .log-stat-value {
+      font-size: 24px;
+      font-weight: 600;
+      color: #e94560;
+    }
+
+    .log-stat-label {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.5);
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .tab {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.1);
+      color: rgba(255, 255, 255, 0.7);
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s;
+    }
+
+    .tab.active {
+      background: linear-gradient(135deg, #e94560 0%, #c73e54 100%);
+      color: white;
+    }
+
+    .tab:hover:not(.active) {
+      background: rgba(255, 255, 255, 0.15);
+    }
   </style>
 </head>
 <body>
@@ -383,10 +567,42 @@
       <ul style="margin-left: 20px; color: rgba(255, 255, 255, 0.7); line-height: 1.8;">
         <li>Team match history from HLTV.org</li>
         <li>Recent team performance and rankings</li>
-        <li>Head-to-head statistics</li>
+        <li>Head-to-head statistics (last 3 months priority)</li>
         <li>Map pool analysis</li>
         <li>Recent roster changes</li>
       </ul>
+    </div>
+
+    <div class="card">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <h2 class="card-title">📝 Prediction Logs</h2>
+        <div class="log-header-actions">
+          <button id="refresh-logs-btn" class="btn-icon" title="Refresh Logs">🔄</button>
+          <button id="clear-logs-btn" class="btn-icon btn-danger" title="Clear All Logs">🗑️</button>
+        </div>
+      </div>
+      
+      <div id="log-stats" class="log-stats" style="display: none;">
+        <div class="log-stat">
+          <span class="log-stat-value" id="stat-total">0</span>
+          <span class="log-stat-label">Total Predictions</span>
+        </div>
+        <div class="log-stat">
+          <span class="log-stat-value" id="stat-rounds">0</span>
+          <span class="log-stat-label">Rounds Analyzed</span>
+        </div>
+        <div class="log-stat">
+          <span class="log-stat-value" id="stat-avg-conf">0%</span>
+          <span class="log-stat-label">Avg Confidence</span>
+        </div>
+      </div>
+
+      <div id="logs-container" class="logs-container">
+        <div class="log-empty">
+          <p>💭 No predictions yet</p>
+          <p style="font-size: 12px; margin-top: 8px;">Visit majors.im and click "Predict Current Round" to start</p>
+        </div>
+      </div>
     </div>
 
     <div class="btn-group">

@@ -10,6 +10,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const saveBtn = document.getElementById('save-btn');
   const testBtn = document.getElementById('test-btn');
   const refreshModelsBtn = document.getElementById('refresh-models-btn');
+  const refreshLogsBtn = document.getElementById('refresh-logs-btn');
+  const clearLogsBtn = document.getElementById('clear-logs-btn');
+  const logsContainer = document.getElementById('logs-container');
+  const logStats = document.getElementById('log-stats');
   const alertSuccess = document.getElementById('alert-success');
   const alertError = document.getElementById('alert-error');
 
@@ -220,4 +224,161 @@ document.addEventListener('DOMContentLoaded', async () => {
       testBtn.textContent = '🔍 Test API';
     }
   });
+
+  // ========== 日志功能 ==========
+  
+  // 加载日志
+  async function loadLogs() {
+    try {
+      const data = await chrome.storage.local.get(['predictionLogs']);
+      const logs = data.predictionLogs || [];
+      renderLogs(logs);
+    } catch (error) {
+      console.error('Error loading logs:', error);
+      logsContainer.innerHTML = '<div class="log-empty"><p>❌ Error loading logs</p></div>';
+    }
+  }
+
+  // 渲染日志
+  function renderLogs(logs) {
+    if (!logs || logs.length === 0) {
+      logsContainer.innerHTML = `
+        <div class="log-empty">
+          <p>💭 No predictions yet</p>
+          <p style="font-size: 12px; margin-top: 8px;">Visit majors.im and click "Predict Current Round" to start</p>
+        </div>
+      `;
+      logStats.style.display = 'none';
+      return;
+    }
+
+    // 计算统计数据
+    const totalPredictions = logs.length;
+    const rounds = new Set(logs.map(l => l.round)).size;
+    const avgConfidence = Math.round(logs.reduce((sum, l) => sum + (l.confidence || 0), 0) / logs.length);
+
+    document.getElementById('stat-total').textContent = totalPredictions;
+    document.getElementById('stat-rounds').textContent = rounds;
+    document.getElementById('stat-avg-conf').textContent = avgConfidence + '%';
+    logStats.style.display = 'flex';
+
+    // 按时间倒序排列，最新的在前面
+    const sortedLogs = [...logs].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    // 按Round分组
+    const groupedByRound = {};
+    sortedLogs.forEach(log => {
+      const round = log.round || 'Unknown Round';
+      if (!groupedByRound[round]) {
+        groupedByRound[round] = [];
+      }
+      groupedByRound[round].push(log);
+    });
+
+    let html = '';
+    
+    for (const [round, roundLogs] of Object.entries(groupedByRound)) {
+      html += `<div style="margin-bottom: 24px;">`;
+      html += `<h3 style="color: #e94560; margin-bottom: 12px; font-size: 15px;">🎮 ${round}</h3>`;
+      
+      roundLogs.forEach(log => {
+        const statusClass = log.error ? 'error' : 'success';
+        const time = new Date(log.timestamp).toLocaleString();
+        
+        html += `
+          <div class="log-block ${statusClass}">
+            <div class="log-block-header">
+              <div class="log-block-title">
+                <span>${log.team1 || 'Team 1'}</span>
+                <span style="color: rgba(255,255,255,0.4)">vs</span>
+                <span>${log.team2 || 'Team 2'}</span>
+              </div>
+              <span class="log-block-time">${time}</span>
+            </div>
+        `;
+
+        if (log.error) {
+          html += `
+            <div style="color: #f87171;">
+              ❌ Error: ${log.error}
+            </div>
+          `;
+        } else {
+          html += `
+            <div class="log-block-result">
+              <span class="log-winner">🏆 ${log.predictedWinner || 'Unknown'}</span>
+              <span class="log-confidence">${log.confidence || 0}% confidence</span>
+              ${log.riskLevel ? `<span style="color: ${log.riskLevel === 'low' ? '#4ade80' : log.riskLevel === 'high' ? '#f87171' : '#fbbf24'}; font-size: 13px;">Risk: ${log.riskLevel}</span>` : ''}
+            </div>
+          `;
+
+          // Key Factors
+          if (log.keyFactors && log.keyFactors.length > 0) {
+            html += `
+              <div class="log-factors">
+                <div class="log-factors-title">🔑 Key Factors:</div>
+            `;
+            log.keyFactors.forEach(factor => {
+              html += `
+                <div class="log-factor">
+                  <span class="log-factor-icon">•</span>
+                  <span>${factor}</span>
+                </div>
+              `;
+            });
+            html += `</div>`;
+          }
+
+          // Brief Analysis
+          if (log.briefAnalysis) {
+            html += `
+              <div class="log-analysis">
+                <strong>💬 Analysis:</strong> ${log.briefAnalysis}
+              </div>
+            `;
+          }
+        }
+
+        html += `</div>`; // end log-block
+      });
+      
+      html += `</div>`; // end round group
+    }
+
+    logsContainer.innerHTML = html;
+  }
+
+  // 清除日志
+  async function clearLogs() {
+    if (!confirm('Are you sure you want to clear all prediction logs?')) {
+      return;
+    }
+    
+    try {
+      await chrome.storage.local.set({ predictionLogs: [] });
+      renderLogs([]);
+      alertSuccess.textContent = '✓ Logs cleared successfully!';
+      showAlert('success');
+    } catch (error) {
+      console.error('Error clearing logs:', error);
+      alertError.textContent = '✗ Error clearing logs';
+      showAlert('error');
+    }
+  }
+
+  // 绑定日志按钮事件
+  if (refreshLogsBtn) {
+    refreshLogsBtn.addEventListener('click', async () => {
+      await loadLogs();
+      alertSuccess.textContent = '✓ Logs refreshed!';
+      showAlert('success');
+    });
+  }
+
+  if (clearLogsBtn) {
+    clearLogsBtn.addEventListener('click', clearLogs);
+  }
+
+  // 初始加载日志
+  await loadLogs();
 });
