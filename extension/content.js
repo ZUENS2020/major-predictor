@@ -197,7 +197,7 @@
         const currentRoundMatches = pendingMatches.filter(m => m.roundIndex === targetRoundIndex);
 
         logger.info(`Targeting ${targetRoundName} (${currentRoundMatches.length} matches)...`);
-        logger.info(`📊 Using HLTV API for team rankings & match history`);
+        logger.info(`🔍 Searching HLTV & web for team data...`);
         this.ui.updateStatus('busy', `Predicting ${targetRoundName}...`);
 
         // Mark all as loading first
@@ -416,8 +416,7 @@
 
     async analyzeMatch(match) {
       try {
-        logger.info(`Analyzing: ${match.team1} vs ${match.team2}`);
-        logger.info(`⏳ Fetching HLTV data & generating prediction...`);
+        logger.info(`🎯 Analyzing: ${match.team1} vs ${match.team2}`);
         
         const response = await chrome.runtime.sendMessage({
           action: 'getPrediction',
@@ -432,15 +431,22 @@
           this.predictions.set(match.id, response.prediction);
           this.updateBadge(match.element, response.prediction, match.id);
           
-          // Enhanced logging with HLTV data info
+          // Enhanced logging with all key factors
           const pred = response.prediction;
           logger.success(`✅ ${match.team1} vs ${match.team2}`);
           logger.info(`   → Winner: ${pred.predictedWinner} (${pred.confidence}% confidence)`);
           if (pred.predictedScore) {
-            logger.info(`   → Score: ${pred.predictedScore}`);
+            logger.info(`   → Predicted Score: ${pred.predictedScore}`);
           }
+          // Show all key factors including rankings
           if (pred.keyFactors && pred.keyFactors.length > 0) {
-            logger.info(`   → Factors: ${pred.keyFactors.slice(0, 2).join(', ')}`);
+            pred.keyFactors.forEach((factor, i) => {
+              logger.info(`   → Factor ${i+1}: ${factor}`);
+            });
+          }
+          // Show brief analysis
+          if (pred.briefAnalysis) {
+            logger.info(`   → Analysis: ${pred.briefAnalysis.substring(0, 150)}...`);
           }
           return true;
         } else {
@@ -499,7 +505,7 @@
         <span>${prediction.predictedWinner}</span>
         ${confidence}
         <div class="mp-tooltip">
-          <div class="mp-tooltip-header">🎯 AI Analysis (HLTV-Based)</div>
+          <div class="mp-tooltip-header">🎯 AI Prediction</div>
           <div style="margin-top:6px">${prediction.briefAnalysis || 'No analysis available'}</div>
           ${factorsHtml}
           <div style="margin-top:8px; font-size:0.9em; display:flex; gap:12px; color:#aaa">
