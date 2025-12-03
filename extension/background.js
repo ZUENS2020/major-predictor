@@ -19,6 +19,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'getSettings') {
     chrome.storage.sync.get([
       'openRouterApiKey',
+      'tavilyApiKey',
       'aiModel',
       'autoPredict',
       'showConfidence',
@@ -62,7 +63,7 @@ async function fetchHLTVData(teamName) {
 
 // Get prediction from OpenRouter API
 async function getPrediction(matchData) {
-  const settings = await chrome.storage.sync.get(['openRouterApiKey', 'aiModel', 'showConfidence', 'includeHltv']);
+  const settings = await chrome.storage.sync.get(['openRouterApiKey', 'tavilyApiKey', 'aiModel', 'showConfidence', 'includeHltv']);
   
   if (!settings.openRouterApiKey) {
     throw new Error('OpenRouter API key not configured. Please set it in the extension settings.');
@@ -70,8 +71,22 @@ async function getPrediction(matchData) {
 
   const model = settings.aiModel || 'anthropic/claude-3.5-sonnet';
   
+  // Fetch external data if enabled
+  let searchContext = '';
+  if (settings.tavilyApiKey) {
+    try {
+      const query = `CS2 match prediction ${matchData.team1} vs ${matchData.team2} ${matchData.tournament || ''} recent results stats`;
+      const searchResults = await searchTavily(query, settings.tavilyApiKey);
+      if (searchResults) {
+        searchContext = formatSearchResults(searchResults);
+      }
+    } catch (e) {
+      console.error('Search failed:', e);
+    }
+  }
+
   // Build the prompt for prediction
-  const prompt = buildPredictionPrompt(matchData, settings);
+  const prompt = buildPredictionPrompt(matchData, settings, searchContext);
 
   try {
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -87,10 +102,9 @@ async function getPrediction(matchData) {
         messages: [
           {
             role: 'system',
-            content: `You are an expert CS2 esports analyst with deep knowledge of professional Counter-Strike. 
-You analyze team match histories, recent form, head-to-head records, map pools, and roster changes to predict match outcomes.
-Your predictions should be based on factual historical performance and current team conditions.
-Always provide your analysis in a structured JSON format.`
+            content: `You are an expert CS2 esports analyst. Analyze matches based on recent form, map pool, and head-to-head stats.
+If search results are provided, prioritize that recent information.
+Always respond with valid JSON.`
           },
           {
             role: 'user',
@@ -98,7 +112,7 @@ Always provide your analysis in a structured JSON format.`
           }
         ],
         max_tokens: 1500,
-        temperature: 0.7
+        temperature: 0.5
       })
     });
 
@@ -122,8 +136,33 @@ Always provide your analysis in a structured JSON format.`
   }
 }
 
+async function searchTavily(query, apiKey) {
+  const response = await fetch('https://api.tavily.com/search', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      api_key: apiKey,
+      query: query,
+      search_depth: "basic",
+      include_answer: true,
+      max_results: 3
+    })
+  });
+  
+  if (!response.ok) return null;
+  return await response.json();
+}
+
+function formatSearchResults(data) {
+  if (!data || !data.results) return '';
+  return "Recent Information from Search:\n" + 
+    data.results.map(r => `- ${r.title}: ${r.content}`).join('\n');
+}
+
 // Build the prompt for the AI model
-function buildPredictionPrompt(matchData, settings) {
+function buildPredictionPrompt(matchData, settings, searchContext) {
   let prompt = `Analyze this CS2 match and provide a prediction:
 
 **Match Details:**
@@ -131,10 +170,11 @@ function buildPredictionPrompt(matchData, settings) {
 - Team 2: ${matchData.team2}
 - Tournament: ${matchData.tournament || 'Major Championship'}
 - Match Type: ${matchData.matchType || 'Best of 3'}
-- Date: ${matchData.date || 'Upcoming'}
 
 **Analysis Request:**
-Based on your knowledge of these teams' recent performances, head-to-head records, map pools, current form, and any recent roster changes, predict the outcome of this match.
+Predict the winner based on team form and map pool.
+
+${searchContext ? `\n**Search Context:**\n${searchContext}\n` : ''}
 
 Please provide your response in the following JSON format:
 {
@@ -142,26 +182,12 @@ Please provide your response in the following JSON format:
   "confidence": 75,
   "predictedScore": "2-1",
   "keyFactors": [
-    "Factor 1 explanation",
-    "Factor 2 explanation",
-    "Factor 3 explanation"
+    "Factor 1",
+    "Factor 2"
   ],
-  "team1Strengths": ["strength1", "strength2"],
-  "team1Weaknesses": ["weakness1"],
-  "team2Strengths": ["strength1", "strength2"],
-  "team2Weaknesses": ["weakness1"],
-  "mapPrediction": {
-    "team1BestMaps": ["map1", "map2"],
-    "team2BestMaps": ["map1", "map2"],
-    "likelyDecider": "map name"
-  },
   "riskLevel": "low|medium|high",
-  "briefAnalysis": "2-3 sentence summary of the prediction rationale"
+  "briefAnalysis": "Short summary"
 }`;
-
-  if (matchData.additionalContext) {
-    prompt += `\n\n**Additional Context:**\n${matchData.additionalContext}`;
-  }
 
   return prompt;
 }

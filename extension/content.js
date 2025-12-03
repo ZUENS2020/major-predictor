@@ -231,14 +231,19 @@
 
     findMatches() {
       const matches = [];
-      // Selectors for majors.im, including specific bracket classes
-      const matchElements = document.querySelectorAll('.match, .bracket-match, [class*="match-"], [class*="bracket_match"]');
       
-      matchElements.forEach(el => {
+      // Primary strategy: Find match containers with bracket_match class (majors.im specific)
+      const matchElements = document.querySelectorAll('[class*="bracket_match"], [class*="match_"], .match');
+      
+      logger.info(`Found ${matchElements.length} potential match elements`);
+      
+      matchElements.forEach((el, idx) => {
         const teams = this.extractTeams(el);
         if (teams) {
           const id = `${teams.team1}-vs-${teams.team2}`.toLowerCase().replace(/[^a-z0-9]/g, '-');
           const roundInfo = this.getRoundInfo(el);
+          
+          logger.info(`Match ${idx}: ${teams.team1} vs ${teams.team2} (${roundInfo.name})`);
           
           matches.push({
             element: el,
@@ -252,123 +257,154 @@
         }
       });
 
-      // Fallback for text-based detection if specific classes aren't found
-      if (matches.length === 0) {
-        const knownTeams = [
-          'Natus Vincere', 'NAVI', 'G2', 'G2 Esports', 'FaZe', 'FaZe Clan',
-          'Vitality', 'Team Vitality', 'Astralis', 'MOUZ', 'mousesports',
-          'Spirit', 'Team Spirit', 'Heroic', 'Cloud9', 'Complexity',
-          'Liquid', 'Team Liquid', 'ENCE', 'BIG', 'Eternal Fire',
-          'paiN', 'FURIA', 'Imperial', 'Monte', 'GamerLegion',
-          'MIBR', 'TheMongolz', 'Virtus.pro', 'VP', 'Falcons',
-          '9z', 'SAW', 'Aurora', 'fnatic', 'NIP', 'Ninjas in Pyjamas'
-        ];
-
-        const foundTeams = [];
-        const allElements = document.body.getElementsByTagName('*');
-        
-        for (let el of allElements) {
-            // Look for leaf nodes with text
-            if (el.children.length === 0 && el.textContent.trim().length > 0) {
-                const text = el.textContent.trim();
-                // Check if text matches a known team exactly or contains it
-                const match = knownTeams.find(t => text === t || (text.length < 30 && text.includes(t)));
-                if (match) {
-                    foundTeams.push({ element: el, name: match });
-                }
-            }
-        }
-
-        // Pair them up sequentially
-        for (let i = 0; i < foundTeams.length - 1; i += 2) {
-            const t1 = foundTeams[i];
-            const t2 = foundTeams[i+1];
-            
-            const id = `${t1.name}-vs-${t2.name}`.toLowerCase().replace(/[^a-z0-9]/g, '-');
-            
-            // Find a common parent to attach the badge
-            let commonParent = t1.element.parentElement;
-            // Go up at most 5 levels to find a common container
-            let levels = 0;
-            let container = commonParent;
-            while (container && levels < 5) {
-                if (container.contains(t2.element)) {
-                    break;
-                }
-                container = container.parentElement;
-                levels++;
-            }
-            
-            if (container && levels < 5) {
-                const roundInfo = this.getRoundInfo(container);
-                matches.push({
-                    element: container,
-                    id: id,
-                    team1: t1.name,
-                    team2: t2.name,
-                    tournament: document.title,
-                    round: roundInfo.name,
-                    roundIndex: roundInfo.index
-                });
-            }
+      // Deduplicate matches based on ID
+      const uniqueMatches = [];
+      const seenIds = new Set();
+      for (const m of matches) {
+        if (!seenIds.has(m.id)) {
+          seenIds.add(m.id);
+          uniqueMatches.push(m);
         }
       }
+      
+      logger.info(`Total unique matches found: ${uniqueMatches.length}`);
 
-      return matches;
+      return uniqueMatches;
     }
 
     getRoundInfo(element) {
         let current = element;
         let depth = 0;
-        // Traverse up to find a container that has a "Round X" header sibling or child
-        while (current && current !== document.body && depth < 6) {
+        
+        // Traverse up to find a container that has a "Round X" header or "X-X (BoX)" pattern
+        while (current && current !== document.body && depth < 10) {
+            // Check current element and its siblings
             if (current.parentElement) {
-                const siblings = Array.from(current.parentElement.children);
-                // Look for a sibling that contains "Round X" text
-                const header = siblings.find(s => {
-                    if (s === current) return false;
-                    const text = s.textContent?.trim();
-                    return text && /^Round\s+\d+/i.test(text);
-                });
+                const parent = current.parentElement;
                 
-                if (header) {
-                    const text = header.textContent.trim();
-                    const match = text.match(/^Round\s+(\d+)/i);
-                    return {
-                        name: text,
-                        index: match ? parseInt(match[1], 10) : 999
-                    };
+                // Look in siblings for round header
+                for (const sibling of parent.children) {
+                    const text = sibling.textContent?.trim() || '';
+                    
+                    // Match "Round X" pattern
+                    const roundMatch = text.match(/^Round\s+(\d+)/i);
+                    if (roundMatch) {
+                        return {
+                            name: `Round ${roundMatch[1]}`,
+                            index: parseInt(roundMatch[1], 10)
+                        };
+                    }
+                }
+                
+                // Also check the parent's previous siblings (headers are often before match containers)
+                let prevSibling = parent.previousElementSibling;
+                while (prevSibling) {
+                    const text = prevSibling.textContent?.trim() || '';
+                    const roundMatch = text.match(/Round\s+(\d+)/i);
+                    if (roundMatch) {
+                        return {
+                            name: `Round ${roundMatch[1]}`,
+                            index: parseInt(roundMatch[1], 10)
+                        };
+                    }
+                    prevSibling = prevSibling.previousElementSibling;
                 }
             }
+            
             current = current.parentElement;
             depth++;
         }
-        return { name: 'Unknown Round', index: 999 };
+        
+        // Fallback: try to find round info from class names
+        let el = element;
+        while (el && el !== document.body) {
+            const classList = el.className || '';
+            if (classList.includes('round')) {
+                // Try to extract round number from nearby text
+                const roundText = el.querySelector('[class*="round"]')?.textContent || '';
+                const match = roundText.match(/Round\s+(\d+)/i);
+                if (match) {
+                    return { name: `Round ${match[1]}`, index: parseInt(match[1], 10) };
+                }
+            }
+            el = el.parentElement;
+        }
+        
+        return { name: 'Round 1', index: 1 }; // Default to Round 1 if not found
     }
 
     extractTeams(element) {
-      // Heuristic to find team names within a match element
-      // Look for elements with 'team' in class or just two distinct text blocks
+      // Strategy for majors.im: look for teamName class or img alt attributes
       const candidates = [];
       
-      // Strategy 1: Specific classes
-      const teamEls = element.querySelectorAll('[class*="team"], .name, strong');
-      teamEls.forEach(t => {
-        const text = t.textContent.trim();
-        if (text.length > 1 && text.length < 20) candidates.push(text);
+      // Strategy 1: Look for bracket_teamName class (majors.im specific)
+      const teamNameEls = element.querySelectorAll('[class*="teamName"], [class*="team-name"], .name');
+      teamNameEls.forEach(t => {
+        let text = t.textContent.trim();
+        // Remove leading numbers/seeds like "1 FURIA" -> "FURIA"
+        text = text.replace(/^\d+\s+/, '');
+        if (text.length > 1 && text.length < 30) {
+          candidates.push(text);
+        }
       });
 
-      // Strategy 2: Images with alt tags
+      // Strategy 2: Look for bracket_team class containers
+      if (candidates.length < 2) {
+        const teamEls = element.querySelectorAll('[class*="bracket_team"]');
+        teamEls.forEach(t => {
+          // Try to find the team name inside
+          const nameEl = t.querySelector('[class*="teamName"], [class*="name"], span');
+          if (nameEl) {
+            let text = nameEl.textContent.trim();
+            text = text.replace(/^\d+\s+/, '');
+            if (text.length > 1 && text.length < 30 && !candidates.includes(text)) {
+              candidates.push(text);
+            }
+          }
+        });
+      }
+
+      // Strategy 3: Images with alt tags (team logos)
       if (candidates.length < 2) {
         const imgs = element.querySelectorAll('img[alt]');
         imgs.forEach(img => {
           const alt = img.alt.trim();
-          if (alt.length > 1) candidates.push(alt);
+          // Skip common non-team alts
+          if (alt.length > 1 && alt.length < 20 && !['logo', 'icon', 'flag'].includes(alt.toLowerCase())) {
+            if (!candidates.includes(alt)) {
+              candidates.push(alt);
+            }
+          }
+        });
+      }
+
+      // Strategy 4: Look for any span/div with team-like content
+      if (candidates.length < 2) {
+        const allSpans = element.querySelectorAll('span, div');
+        const knownTeams = [
+          'FURIA', 'Natus Vincere', 'NAVI', 'Team Vitality', 'Vitality', 'FaZe Clan', 'FaZe',
+          'Team Falcons', 'Falcons', 'B8', 'The MongolZ', 'MongolZ', 'Imperial Esports', 'Imperial',
+          'MOUZ', 'PARIVISION', 'Team Spirit', 'Spirit', 'Team Liquid', 'Liquid',
+          'G2 Esports', 'G2', 'Passion UA', 'paiN Gaming', 'paiN', '3DMAX',
+          'Aurora Gaming', 'Aurora', 'M80', 'FlyQuest', 'Astralis', 'Ninjas in Pyjamas', 'NIP',
+          'TYLOO', 'MIBR', 'fnatic', 'Fnatic', 'ENCE', 'BIG', 'Eternal Fire',
+          'Heroic', 'Cloud9', 'Complexity', 'GamerLegion', 'Monte', 'SAW', '9z',
+          'Virtus.pro', 'VP'
+        ];
+        
+        allSpans.forEach(span => {
+          const text = span.textContent.trim().replace(/^\d+\s+/, '');
+          if (knownTeams.some(t => text === t || text.includes(t))) {
+            const matchedTeam = knownTeams.find(t => text === t || text.includes(t));
+            if (matchedTeam && !candidates.includes(matchedTeam)) {
+              candidates.push(matchedTeam);
+            }
+          }
         });
       }
 
       if (candidates.length >= 2) {
-        // Filter duplicates and take first two
+        // Filter duplicates and take first two unique
         const unique = [...new Set(candidates)];
         if (unique.length >= 2) {
           return { team1: unique[0], team2: unique[1] };
