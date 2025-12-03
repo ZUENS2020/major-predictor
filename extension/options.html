@@ -179,6 +179,25 @@
       margin-top: 8px;
     }
 
+    .btn-link {
+      background: none;
+      border: none;
+      color: #e94560;
+      cursor: pointer;
+      font-size: 12px;
+      padding: 0;
+      margin-left: 8px;
+    }
+
+    .btn-link:hover {
+      text-decoration: underline;
+    }
+
+    .btn-link:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
     a {
       color: #e94560;
       text-decoration: none;
@@ -299,14 +318,9 @@
       <div class="form-group">
         <label for="model">AI Model</label>
         <select id="model">
-          <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet (Recommended)</option>
-          <option value="anthropic/claude-3-haiku">Claude 3 Haiku (Fast)</option>
-          <option value="openai/gpt-4o">GPT-4o</option>
-          <option value="openai/gpt-4o-mini">GPT-4o Mini (Budget)</option>
-          <option value="google/gemini-pro-1.5">Gemini Pro 1.5</option>
-          <option value="meta-llama/llama-3.1-70b-instruct">Llama 3.1 70B</option>
+          <option value="">Loading models...</option>
         </select>
-        <p class="help-text">Choose the AI model for generating predictions.</p>
+        <p class="help-text">Choose the AI model for generating predictions. <button id="refresh-models-btn" class="btn-link">🔄 Refresh</button></p>
       </div>
     </div>
 
